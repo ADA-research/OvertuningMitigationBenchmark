@@ -1,0 +1,104 @@
+task_id: 0
+dataset_id: 1590
+problem_type: binary
+random_state: 79
+optimizer: smac
+metric: accuracy
+offline: False
+offline_data_loading: True
+mitigation_strategy: none
+racing_strategy: none
+iterations: 250
+bo_initial_random_iterations: 25
+smac_surrogate_model: gaussian_process
+smac_surrogate_random_forest_n_trees: 10
+debug: False
+store_results_google_cloud: False
+store_vectors_google_cloud: False
+
+outer_evaluation:
+  - resampling: cv
+  - train_size: 0
+  - n_folds: 3
+  - n_repeats: 3
+  - fold: int = 0
+  - repeat: int = 0
+
+evaluation:
+  - resampling: holdout
+  - n_repeats: 1
+  - val_size: 0.2
+  - selection_size: 0.0
+  - n_folds: 5
+  - reshuffle: False
+  - retrain: True
+
+classifiers:
+  - AdaBoost
+  - DecisionTree
+  - ElasticNet
+  - ExtraTrees
+  - GaussianNB
+  - GradientBoosting
+  - KNeighbors
+  - Lasso
+  - LogisticRegression
+  - MLP
+  - RealMLP
+  - PassiveAggressive
+  - RandomForest
+  - Ridge
+  - SGD
+  - XGBoost
+  - LGBM
+  - CatBoost
+
+regressors:
+  - AdaBoost
+  - Bagging
+  - DecisionTree
+  - ElasticNet
+  - ExtraTree
+  - ExtraTrees
+  - GradientBoosting
+  - KNeighbors
+  - Lasso
+  - MLP
+  - RealMLP
+  - RandomForest
+  - Ridge
+  - SGD
+  - XGBoost
+  - LGBM
+  - CatBoost
+
+preprocessors:
+  scalers:
+    - None
+    - StandardScaler
+    - MinMaxScaler
+    - MaxAbsScaler
+    - RobustScaler
+    - Normalizer
+    - QuantileTransformer
+    - PowerTransformer
+
+  dim_reducers:
+    - None
+    - PCA
+    - FastICA
+
+  imputers:
+    - NumericalSimpleImputer
+    - IterativeImputer
+    - KNNImputer
+
+  encoders:
+    - OrdinalEncoder
+    - OneHotEncoder
+
+  feat_selectors:
+    - None
+    - VarianceThreshold
+    - SelectKBest
+    - SelectPercentile
