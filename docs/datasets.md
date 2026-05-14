@@ -52,20 +52,3 @@
 | 49 | 363708     | wine_quality                               |       6,497 |         12 | Regression |
 | 50 | 363711     | MIC                                        |       1,699 |        111 | Multiclass |
 | 51 | 363712     | jm1                                        |      10,885 |         21 | Binary     |
-
-
-Too big for RealMLP to finish within 60 hours: 
-363628 (129k samples)
-363673 (150k samples)
-363679 (19k samples? Maybe problematic with one-hot?)
-363681 (12k samples, some runs)
-363684 (around 60 hours, but probably fine)
-
-THINGS TO PICK UP TOMORROW: 
-- Analyze the three RealMLP runs, make decision on actual experiments
-- Make decision on logloss for multiclass
-- Still have to fix big datasets, but then at least we are getting close
-- Continue writing
-- Continue analyzing results
-- Formalize trajectories calculation
-- - Probably one trajectory file per dataset per way of selecting incumbent
