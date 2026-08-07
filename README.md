@@ -9,7 +9,7 @@ Tested and working with **Python 3.11.3 on WSL** (Windows Subsystem for Linux).
 ### 1. Clone the repository
 
 ```bash
-git clone URL (omitted for anonymity)
+git clone https://github.com/ADA-research/OvertuningMitigationBenchmark.git
 cd OvertuningBenchmark
 ```
 
