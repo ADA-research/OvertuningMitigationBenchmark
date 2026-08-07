@@ -46,7 +46,6 @@ pip install IPython
 
 ```
 OvertuningBenchmark/
-├── main.py
 ├── README.md
 ├── requirements.txt
 ├── docs/
