@@ -1,7 +1,7 @@
 task_id: 0
 dataset_id: 1590
 problem_type: binary
-random_state: 79
+random_state: 78
 optimizer: smac
 metric: accuracy
 offline: False
