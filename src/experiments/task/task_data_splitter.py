@@ -1,6 +1,5 @@
-import numpy as np
 import pandas as pd
-from sklearn.model_selection import train_test_split, KFold, RepeatedKFold
+from sklearn.model_selection import train_test_split, KFold, RepeatedKFold, StratifiedKFold, RepeatedStratifiedKFold
 from src.experiments.task.task_config import OuterEvaluationConfig
 
 
@@ -8,9 +7,11 @@ class TaskDataSplitter:
     def __init__(
             self,
             outer_evaluation_config: OuterEvaluationConfig,
+            problem_type: str,
             random_state: int
     ):
         self.outer_evaluation = outer_evaluation_config
+        self.problem_type = problem_type
 
         # Data splitting reproducibility is crucial for interpretability
         self.random_state = random_state
@@ -31,11 +32,14 @@ class TaskDataSplitter:
             tuple: (X_train, X_test, y_train, y_test)
         """
 
+        stratify_on = None if self.problem_type == "regression" else y
+
         # Holdout outer split
         if self.outer_evaluation.resampling == "holdout":
             X_train, X_test, y_train, y_test = train_test_split(
                 X, y,
                 train_size=self.outer_evaluation.train_size,
+                stratify=stratify_on,
                 random_state=self.random_state,
             )
 
@@ -47,20 +51,37 @@ class TaskDataSplitter:
             # All tasks with same n_folds, n_repeats, and random_state will generate
             # the same fold splits, then select their specific fold/repeat combination
 
-            if self.outer_evaluation.n_repeats > 1:
-                # Use RepeatedKFold for multiple repeats
-                cv_splitter = RepeatedKFold(
-                    n_splits=self.outer_evaluation.n_folds,
-                    n_repeats=self.outer_evaluation.n_repeats,
-                    random_state=self.random_state
-                )
+            # If regression, we do not stratify
+            if self.problem_type == "regression":
+                if self.outer_evaluation.n_repeats > 1:
+                    # Use RepeatedKFold for multiple repeats
+                    cv_splitter = RepeatedKFold(
+                        n_splits=self.outer_evaluation.n_folds,
+                        n_repeats=self.outer_evaluation.n_repeats,
+                        random_state=self.random_state
+                    )
+                else:
+                    # Use KFold for single repeat
+                    cv_splitter = KFold(
+                        n_splits=self.outer_evaluation.n_folds,
+                        shuffle=True,
+                        random_state=self.random_state
+                    )
+            
             else:
-                # Use KFold for single repeat
-                cv_splitter = KFold(
-                    n_splits=self.outer_evaluation.n_folds,
-                    shuffle=True,
-                    random_state=self.random_state
-                )
+                # For classification, we use stratified splits
+                if self.outer_evaluation.n_repeats > 1:
+                    cv_splitter = RepeatedStratifiedKFold(
+                        n_splits=self.outer_evaluation.n_folds,
+                        n_repeats=self.outer_evaluation.n_repeats,
+                        random_state=self.random_state
+                    )
+                else:
+                    cv_splitter = StratifiedKFold(
+                        n_splits=self.outer_evaluation.n_folds,
+                        shuffle=True,
+                        random_state=self.random_state
+                    )
 
             # Generate all splits
             all_splits = list(cv_splitter.split(X, y))
