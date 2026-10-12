@@ -111,7 +111,10 @@ Example:
 
 ```bash
 python -m src.visualizations.plotting.run \
-	--prod --partial
+	--optimizer HEBO \
+	--optimizer SMAC \
+	--problem-type binary \
+	--prod
 ```
 
 ## Notes
