@@ -254,10 +254,8 @@ class TestBergmanRacingIntegration:
         hist_racing = run_task(task_racing)
         hist_base = run_task(task_base)
 
-        # Racing should have fewer total fold evaluations
-        racing_total_folds = sum(len(r.folds) for r in hist_racing.history)
-        base_total_folds = sum(len(r.folds) for r in hist_base.history)
-
+        racing_total_folds = sum(len(run.folds) for run in hist_racing.history)
+        base_total_folds = sum(len(run.folds) for run in hist_base.history)
         assert racing_total_folds < base_total_folds, (
             f"Racing should save fold evaluations. "
             f"Racing: {racing_total_folds}, Base: {base_total_folds}"

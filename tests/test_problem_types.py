@@ -8,13 +8,6 @@ from src.experiments.task.task_config import DefaultTaskConfig
 from src.search_space.search_space import SearchSpace
 
 
-DATASETS_DIR = Path(__file__).parent.parent / "src" / "datasets" / "datasets"
-
-
-def _dataset_csv_exists(dataset_id):
-    return (DATASETS_DIR / f"{dataset_id}.csv").exists()
-
-
 BINARY_CLASSIFIERS = [
     "AdaBoost",
     "Bagging",
@@ -133,8 +126,10 @@ DATASET_SPECS = [
     pytest.param("binary", 363712, "roc_auc", id="binary_363712"),
 ]
 
-AVAILABLE_DATASET_SPECS = [
-    spec for spec in DATASET_SPECS if _dataset_csv_exists(spec.values[1])
+DATASETS_DIR = Path(__file__).resolve().parents[1] / "src" / "datasets" / "datasets"
+DATASET_SPECS = [
+    spec for spec in DATASET_SPECS
+    if (DATASETS_DIR / f"{spec.values[1]}.csv").is_file()
 ]
 
 
@@ -186,7 +181,7 @@ class TestProblemTypeSearchSpaces:
 class TestProblemTypeRunTaskSmoke:
     @pytest.mark.parametrize(
         ("problem_type", "dataset_id", "metric"),
-        AVAILABLE_DATASET_SPECS,
+        DATASET_SPECS,
     )
     def test_run_task_smoke_for_each_problem_type(self, problem_type, dataset_id, metric):
         model_name = "LGBM"

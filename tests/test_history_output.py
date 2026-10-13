@@ -7,10 +7,13 @@ Vectors (preds, labels) must be loadable after write.
 import numpy as np
 import pandas as pd
 import pytest
+from sklearn.dummy import DummyClassifier, DummyRegressor
 
+from src.evaluators.base_evaluator import Evaluator
 from src.history.artifacts import ARTIFACT_ARCHIVE_NAME, build_artifact_key, load_run_artifact
 from src.history.data_classes import Fold, Run, Split
 from src.history.run_history import RunHistory, MLPlanRunHistory
+from src.metrics.metric import BaseMetric
 
 # Expected columns per benchmark.md specification
 EXPECTED_HISTORY_COLUMNS = [
@@ -30,6 +33,7 @@ EXPECTED_HISTORY_COLUMNS = [
     "early_stopped_makarova",
     "surrogate_mean",
     "surrogate_std",
+    "surrogate_acq",
     "optimizer_suggest_time",
 ]
 
@@ -184,10 +188,15 @@ class TestRunHistoryGetResults:
         history = RunHistory()
         history.add_run(make_run(0.3, 0.4, retrain_test=0.35, iteration=0))
         results = history.get_results(root_path=str(tmp_path) + "/")
-        # Retrain preds are now stored inside the aggregated artifacts.npz
-        artifact_result = next((r for r in results if ARTIFACT_ARCHIVE_NAME in r[0]), None)
-        assert artifact_result is not None
-        assert any("retrain_test_preds" in k for k in artifact_result[1].keys())
+        paths = [r[0] for r in results]
+        assert any(ARTIFACT_ARCHIVE_NAME in p for p in paths)
+
+    def test_configs_yaml_in_results(self, tmp_path):
+        history = RunHistory()
+        history.add_run(make_run(0.3, 0.4, retrain_test=0.35, iteration=0))
+        results = history.get_results(root_path=str(tmp_path) + "/")
+        paths = [r[0] for r in results]
+        assert any("configs.yaml" in p for p in paths)
 
     def test_val_npz_in_results(self, tmp_path):
         history = RunHistory()
@@ -217,6 +226,131 @@ class TestRunHistoryGetResults:
         paths = [r[0] for r in results]
         assert not any("sel.npz" in p for p in paths)
         assert any(ARTIFACT_ARCHIVE_NAME in p for p in paths)
+
+
+class DummyMetric(BaseMetric):
+    def __init__(self):
+        super().__init__("dummy")
+
+    def score(self, y_true: pd.Series, y_pred: np.ndarray):
+        # Keep this metric shape-agnostic; we only need evaluator plumbing here.
+        return float(np.mean(np.asarray(y_pred)))
+
+
+def _make_binary_splits_for_evaluator_tests():
+    X_train = pd.DataFrame({"x": [0, 1, 2, 3]})
+    y_train = pd.Series([0, 1, 0, 1])
+
+    X_val = pd.DataFrame({"x": [4, 5]})
+    y_val = pd.Series([0, 1])
+
+    X_test = pd.DataFrame({"x": [6, 7]})
+    y_test = pd.Series([1, 0])
+
+    X_sel = pd.DataFrame({"x": [8, 9]})
+    y_sel = pd.Series([1, 0])
+
+    return (X_train, y_train), (X_val, y_val), (X_test, y_test), (X_sel, y_sel)
+
+
+def _make_regression_splits_for_evaluator_tests():
+    X_train = pd.DataFrame({"x": [0.0, 1.0, 2.0, 3.0]})
+    y_train = pd.Series([0.1, 0.2, 0.3, 0.4])
+
+    X_val = pd.DataFrame({"x": [4.0, 5.0]})
+    y_val = pd.Series([0.5, 0.6])
+
+    X_test = pd.DataFrame({"x": [6.0, 7.0]})
+    y_test = pd.Series([0.7, 0.8])
+
+    return (X_train, y_train), (X_val, y_val), (X_test, y_test)
+
+
+class TestEvaluatorPredictionPrecision:
+    def test_evaluate_uses_configured_precision_for_prediction_storage(self):
+        metric = DummyMetric()
+        evaluator = Evaluator(metric=metric, prediction_storage_precision="float32")
+
+        (X_train, y_train), (X_val, y_val), (X_test, y_test), (X_sel, y_sel) = _make_binary_splits_for_evaluator_tests()
+        estimator = DummyClassifier(strategy="prior")
+
+        fold = evaluator.evaluate(
+            estimator=estimator,
+            X_train=X_train,
+            y_train=y_train,
+            X_val=X_val,
+            y_val=y_val,
+            X_test=X_test,
+            y_test=y_test,
+            X_sel=X_sel,
+            y_sel=y_sel,
+            fold_id=1,
+        )
+
+        assert fold.preds.val.dtype == np.float32
+        assert fold.preds.test.dtype == np.float32
+        assert fold.preds.selection.dtype == np.float32
+        assert fold.preds.val.ndim == 1
+
+        # Integer labels are intentionally stored as int16 independent of float precision.
+        assert fold.labels.val.dtype == np.int16
+        assert fold.labels.test.dtype == np.int16
+        assert fold.labels.selection.dtype == np.int16
+
+    def test_retrain_and_evaluate_uses_configured_precision_for_test_predictions(self):
+        metric = DummyMetric()
+        evaluator = Evaluator(metric=metric, prediction_storage_precision="float64")
+
+        (X_train, y_train), (X_val, y_val), (X_test, y_test), (X_sel, y_sel) = _make_binary_splits_for_evaluator_tests()
+        estimator = DummyClassifier(strategy="prior")
+
+        fold = evaluator.retrain_and_evaluate(
+            estimator=estimator,
+            X_train=X_train,
+            y_train=y_train,
+            X_val=X_val,
+            y_val=y_val,
+            X_test=X_test,
+            y_test=y_test,
+            X_sel=X_sel,
+            y_sel=y_sel,
+            fold_id=2,
+        )
+
+        assert fold.preds.test.dtype == np.float64
+        assert fold.labels.test.dtype == np.int16
+
+    def test_series_to_numpy_uses_class_precision_for_float_series(self):
+        metric = DummyMetric()
+        evaluator = Evaluator(metric=metric, prediction_storage_precision="float16")
+
+        values = pd.Series([0.1, 0.2, 0.3], dtype=np.float64)
+        arr = evaluator.series_to_numpy(values)
+
+        assert arr.dtype == np.float16
+
+    def test_evaluate_stores_regression_float_labels_with_configured_precision(self):
+        metric = DummyMetric()
+        evaluator = Evaluator(metric=metric, prediction_storage_precision="float32")
+
+        (X_train, y_train), (X_val, y_val), (X_test, y_test) = _make_regression_splits_for_evaluator_tests()
+        estimator = DummyRegressor(strategy="mean")
+
+        fold = evaluator.evaluate(
+            estimator=estimator,
+            X_train=X_train,
+            y_train=y_train,
+            X_val=X_val,
+            y_val=y_val,
+            X_test=X_test,
+            y_test=y_test,
+            fold_id=3,
+        )
+
+        assert fold.preds.val.dtype == np.float32
+        assert fold.preds.test.dtype == np.float32
+        assert fold.labels.val.dtype == np.float32
+        assert fold.labels.test.dtype == np.float32
 
 
 class TestStoredVectorsLoadable:
@@ -296,11 +430,14 @@ class TestStoredVectorsLoadable:
         from src.experiments.experiment import Experiment
         Experiment.write_results_to_file(results)
 
-        # Retrain preds are now inside the aggregated artifacts.npz
         archive_path = tmp_path / ARTIFACT_ARCHIVE_NAME
         assert archive_path.exists()
         with np.load(str(archive_path)) as loaded:
             assert "iter_0/retrain_test_preds" in loaded
+
+        with np.load(str(archive_path)) as loaded:
+            retrain_preds = loaded["iter_0/retrain_test_preds"]
+        assert np.array_equal(retrain_preds, run.retrain.preds.test)
 
     def test_config_yaml_written_per_run(self, tmp_path):
         history = RunHistory()
@@ -313,13 +450,12 @@ class TestStoredVectorsLoadable:
         from src.experiments.experiment import Experiment
         Experiment.write_results_to_file(results)
 
-        # Configs are now aggregated into a single configs.yaml at root level
-        import yaml
         config_path = tmp_path / "configs.yaml"
         assert config_path.exists()
+        import yaml
         with open(config_path) as f:
-            loaded_configs = yaml.safe_load(f)
-        assert loaded_configs["iter_0"]["model"] == "LGBM"
+            loaded_config = yaml.safe_load(f)
+        assert loaded_config["iter_0"]["model"] == "LGBM"
 
     def test_test_labels_loadable(self, tmp_path):
         history = RunHistory()

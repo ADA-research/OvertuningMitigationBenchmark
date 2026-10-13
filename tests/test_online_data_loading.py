@@ -87,6 +87,14 @@ class TestTabarenaDataLoaderTaskEnumeration:
 
 
 class TestTabarenaDataLoaderLoad:
+    def test_string_openml_task_id_is_converted_to_integer(self, fake_tabarena):
+        loader = TabarenaDataLoader()
+
+        X, y, label_map = loader.load("101", problem_type="binary")
+
+        assert len(X) == len(y) == 3
+        assert label_map == {0: "no", 1: "yes"}
+
     def test_binary_load_encodes_targets_and_categories(self, fake_tabarena):
         loader = TabarenaDataLoader()
 

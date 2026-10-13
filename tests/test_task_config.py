@@ -2,14 +2,11 @@
 Tests for TaskConfig: construction, serialization, and field validation.
 """
 import yaml
-import pytest
-
 from src.experiments.task.task_config import (
     DefaultTaskConfig,
     InnerEvaluationConfig,
     OuterEvaluationConfig,
     SearchSpaceConfig,
-    TaskConfig,
 )
 
 
@@ -245,3 +242,12 @@ class TestTaskConfigToYaml:
         assert space is not None
         config = space.sample_configuration()
         assert config["model"] == "LGBM"
+
+
+
+
+
+
+
+
+

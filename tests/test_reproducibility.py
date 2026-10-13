@@ -36,8 +36,8 @@ class TestOuterSplitReproducibility:
         X, y = make_data()
         cfg = OuterEvaluationConfig(resampling="cv", n_folds=3, n_repeats=10, fold=0, repeat=3)
 
-        s1 = TaskDataSplitter(cfg, random_state=78)
-        s2 = TaskDataSplitter(cfg, random_state=78)
+        s1 = TaskDataSplitter(cfg, problem_type="binary", random_state=78)
+        s2 = TaskDataSplitter(cfg, problem_type="binary", random_state=78)
 
         Xt1, Xte1, _, _ = s1.make_outer_split(X, y)
         Xt2, Xte2, _, _ = s2.make_outer_split(X, y)
@@ -55,8 +55,8 @@ class TestOuterSplitReproducibility:
         for repeat in range(10):
             for fold in range(3):
                 cfg = OuterEvaluationConfig(resampling="cv", n_folds=3, n_repeats=10, fold=fold, repeat=repeat)
-                s1 = TaskDataSplitter(cfg, random_state=78)
-                s2 = TaskDataSplitter(cfg, random_state=78)
+                s1 = TaskDataSplitter(cfg, problem_type="binary", random_state=78)
+                s2 = TaskDataSplitter(cfg, problem_type="binary", random_state=78)
                 Xt1, _, _, _ = s1.make_outer_split(X, y)
                 Xt2, _, _, _ = s2.make_outer_split(X, y)
                 assert list(Xt1.index) == list(Xt2.index), (
@@ -72,7 +72,7 @@ class TestOuterSplitReproducibility:
         test_index_sets = []
         for repeat in range(10):
             cfg = OuterEvaluationConfig(resampling="cv", n_folds=3, n_repeats=10, fold=0, repeat=repeat)
-            splitter = TaskDataSplitter(cfg, random_state=78)
+            splitter = TaskDataSplitter(cfg, problem_type="binary", random_state=78)
             _, X_test, _, _ = splitter.make_outer_split(X, y)
             test_index_sets.append(frozenset(X_test.index))
 
@@ -91,7 +91,7 @@ class TestOuterSplitReproducibility:
         test_sets = []
         for fold in range(3):
             cfg = OuterEvaluationConfig(resampling="cv", n_folds=3, n_repeats=1, fold=fold, repeat=0)
-            splitter = TaskDataSplitter(cfg, random_state=78)
+            splitter = TaskDataSplitter(cfg, problem_type="binary", random_state=78)
             _, X_test, _, _ = splitter.make_outer_split(X, y)
             test_sets.append(set(X_test.index))
 
@@ -114,8 +114,8 @@ class TestOuterSplitReproducibility:
         X, y, _ = loader.load(1590, problem_type="binary")
 
         cfg = OuterEvaluationConfig(resampling="cv", n_folds=3, n_repeats=10, fold=0, repeat=0)
-        s1 = TaskDataSplitter(cfg, random_state=78)
-        s2 = TaskDataSplitter(cfg, random_state=78)
+        s1 = TaskDataSplitter(cfg, problem_type="binary", random_state=78)
+        s2 = TaskDataSplitter(cfg, problem_type="binary", random_state=78)
 
         Xt1, Xte1, _, _ = s1.make_outer_split(X, y)
         Xt2, Xte2, _, _ = s2.make_outer_split(X, y)
