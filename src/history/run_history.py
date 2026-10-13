@@ -40,13 +40,10 @@ class RunHistory:
         # Test if all runs are equal
         for run_self, run_other in zip(self.history, other.history):
             if run_self.average_val_score() != run_other.average_val_score():
-                print(run_self.average_val_score(), run_other.average_val_score())
                 return False
             if run_self.average_test_score() != run_other.average_test_score():
-                print(run_self.average_test_score(), run_other.average_test_score())
                 return False
             if dict(run_self.config) != dict(run_other.config):
-                print("configs")
                 return False
 
             for i in range(len(run_self.folds)):

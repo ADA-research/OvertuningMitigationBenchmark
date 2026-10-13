@@ -164,7 +164,7 @@ def plot_relative_overtuning_cdf_breakdown(
     ax.axvline(1.0, linestyle=":")
     ax.set_yticks(np.arange(0, 1.1, 0.1))
     ax.set_yticklabels([f"{y:.1f}" for y in np.arange(0, 1.1, 0.1)])
-    ax.set_xlabel("Relative Overtuning", fontsize=16)
+    ax.set_xlabel("Relative overtuning", fontsize=16)
     ax.set_ylabel("Proportion", fontsize=16)
 
     total_runs = tunable.included_runs + tunable.excluded_runs

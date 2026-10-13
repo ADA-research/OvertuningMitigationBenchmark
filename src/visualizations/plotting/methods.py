@@ -11,7 +11,8 @@ class MethodSpec:
 
 
 BERGMAN_LABEL = "5x5CV + Bergman"
-BERGMAN_RESHUFFLING_LABEL = "5x5CV + Bergman +\nreshuffling"
+BERGMAN_RESHUFFLING_LABEL = "5x5CV + Bergman + reshuf."
+SURROGATE_RESHUFFLING_LABEL = "Surrogate mean + reshuf."
 BASELINE_LABEL = "Baseline"
 MLPLAN_LABEL = "ML-Plan"
 
@@ -22,13 +23,14 @@ METHOD_COLORS: dict[str, str] = {
 
     "Selection set": "#000075",
     "1SE rule": "#e6194B",
-    "Surrogate mean": "#f58231",
+    "Surrogate mean": "#E8850F",
+    SURROGATE_RESHUFFLING_LABEL: "#8B4513",
     "Post-hoc ensembling": "#FF66CC",
     "Makarova": "#734B95",
     "Reshuffling": "#007FFF",
     BERGMAN_LABEL: "#50C878",
     BERGMAN_RESHUFFLING_LABEL: "#228B22",
-    "Thresholdout": "#9A6324",
+    "Thresholdout": "#008B8B",
 }
 
 
@@ -36,16 +38,30 @@ METHOD_COLORS: dict[str, str] = {
 
 _METHOD_COLOR_ALIASES: dict[str, str] = {
     "Baseline (holdout)": BASELINE_LABEL,
+    "Baseline (H)": BASELINE_LABEL,
     "Baseline (CV)": BASELINE_LABEL,
     "Selection set (CV)": "Selection set",
     "Selection set (holdout)": "Selection set",
+    "Selection set (H)": "Selection set",
     "Surrogate mean (CV)": "Surrogate mean",
     "Surrogate mean (holdout)": "Surrogate mean",
+    "Surrogate mean (H)": "Surrogate mean",
     "Post-hoc ensembling (CV)": "Post-hoc ensembling",
     "Post-hoc ensembling (holdout)": "Post-hoc ensembling",
+    "Post-hoc ensembling (H)": "Post-hoc ensembling",
     "Reshuffling (CV)": "Reshuffling",
     "Reshuffling (holdout)": "Reshuffling",
+    "Reshuffling (H)": "Reshuffling",
+    "Surrogate mean + reshuffling": SURROGATE_RESHUFFLING_LABEL,
+    "Surrogate mean + reshuffling (CV)": SURROGATE_RESHUFFLING_LABEL,
+    "Surrogate mean + reshuffling (holdout)": SURROGATE_RESHUFFLING_LABEL,
+    "Surrogate mean + reshuffling (H)": SURROGATE_RESHUFFLING_LABEL,
+    "Surrogate mean + reshuf.": SURROGATE_RESHUFFLING_LABEL,
+    "Surrogate mean + reshuf. (CV)": SURROGATE_RESHUFFLING_LABEL,
+    "Surrogate mean + reshuf. (holdout)": SURROGATE_RESHUFFLING_LABEL,
+    "Surrogate mean + reshuf. (H)": SURROGATE_RESHUFFLING_LABEL,
     "5x5CV + Bergman + reshuffling": BERGMAN_RESHUFFLING_LABEL,
+    "5x5CV + Bergman + reshuf.": BERGMAN_RESHUFFLING_LABEL,
     "MLPlan": MLPLAN_LABEL,
 }
 
@@ -197,7 +213,7 @@ def one_se_mask(df: pd.DataFrame, budget: str) -> pd.Series:
     return (
         _source_is(df, "one_se")
         & _baseline_mitigation_mask(df)
-        & _selection_positive(df)
+        & _selection_zero_or_na(df)
         & _reshuffling_is(df, target=False)
         & _inner_split_is(df, budget)
     )
@@ -208,6 +224,15 @@ def post_hoc_surrogate_mask(df: pd.DataFrame, budget: str) -> pd.Series:
         _source_is(df, "post_hoc_surrogate")
         & _baseline_mitigation_mask(df)
         & _reshuffling_is(df, target=False)
+        & _inner_split_is(df, budget)
+    )
+
+
+def post_hoc_surrogate_reshuffling_mask(df: pd.DataFrame, budget: str) -> pd.Series:
+    return (
+        _source_is(df, "post_hoc_surrogate")
+        & _baseline_mitigation_mask(df)
+        & _reshuffling_is(df, target=True)
         & _inner_split_is(df, budget)
     )
 
@@ -246,6 +271,7 @@ def build_incumbent_cdf_methods(df: pd.DataFrame, budget: str) -> list[tuple[Met
         (MethodSpec(label=BASELINE_LABEL, color=METHOD_COLORS[BASELINE_LABEL], marker="o"), incumbent_benchmark_mask(df, budget)),
         (MethodSpec(label="Selection set", color=METHOD_COLORS["Selection set"], marker="o"), selection_set_mask(df, budget)),
         (MethodSpec(label="Surrogate mean", color=METHOD_COLORS["Surrogate mean"], marker="D"), post_hoc_surrogate_mask(df, budget)),
+        (MethodSpec(label=SURROGATE_RESHUFFLING_LABEL, color=METHOD_COLORS[SURROGATE_RESHUFFLING_LABEL], marker="d"), post_hoc_surrogate_reshuffling_mask(df, budget)),
         (MethodSpec(label="Post-hoc ensembling", color=METHOD_COLORS["Post-hoc ensembling"], marker="P"), post_hoc_ensemble_mask(df, budget)),
     ]
     budget_norm = budget.strip().lower()
@@ -259,6 +285,7 @@ def build_incumbent_delta_methods(df: pd.DataFrame, budget: str) -> list[tuple[M
     methods = [
         (MethodSpec(label="Selection set", color=METHOD_COLORS["Selection set"], marker="o"), selection_set_mask(df, budget)),
         (MethodSpec(label="Surrogate mean", color=METHOD_COLORS["Surrogate mean"], marker="D"), post_hoc_surrogate_mask(df, budget)),
+        (MethodSpec(label=SURROGATE_RESHUFFLING_LABEL, color=METHOD_COLORS[SURROGATE_RESHUFFLING_LABEL], marker="d"), post_hoc_surrogate_reshuffling_mask(df, budget)),
         (MethodSpec(label="Post-hoc ensembling", color=METHOD_COLORS["Post-hoc ensembling"], marker="P"), post_hoc_ensemble_mask(df, budget)),
     ]
     budget_norm = budget.strip().lower()
@@ -298,6 +325,7 @@ def build_all_methods_cdf(df: pd.DataFrame, budget: str) -> list[tuple[MethodSpe
             (MethodSpec(label="Selection set", color=_ALL_METHOD_COLORS["Selection set"], marker="o"), selection_set_mask(df, budget)),
             (MethodSpec(label="1SE rule", color=_ALL_METHOD_COLORS["1SE rule"], marker="s"), one_se_mask(df, budget)),
             (MethodSpec(label="Surrogate mean", color=_ALL_METHOD_COLORS["Surrogate mean"], marker="D"), post_hoc_surrogate_mask(df, budget)),
+            (MethodSpec(label=SURROGATE_RESHUFFLING_LABEL, color=_ALL_METHOD_COLORS[SURROGATE_RESHUFFLING_LABEL], marker="d"), post_hoc_surrogate_reshuffling_mask(df, budget)),
             (MethodSpec(label="Post-hoc ensembling", color=_ALL_METHOD_COLORS["Post-hoc ensembling"], marker="P"), post_hoc_ensemble_mask(df, budget)),
             (MethodSpec(label="Makarova", color=_ALL_METHOD_COLORS["Makarova"], marker="^"), makarova_mask(df, budget)),
             (MethodSpec(label="Reshuffling", color=_ALL_METHOD_COLORS["Reshuffling"], marker="o"), combined_reshuffling_mask(df, budget)),
@@ -308,6 +336,7 @@ def build_all_methods_cdf(df: pd.DataFrame, budget: str) -> list[tuple[MethodSpe
         return [
             (MethodSpec(label="Selection set", color=_ALL_METHOD_COLORS["Selection set"], marker="o"), selection_set_mask(df, budget)),
             (MethodSpec(label="Surrogate mean", color=_ALL_METHOD_COLORS["Surrogate mean"], marker="D"), post_hoc_surrogate_mask(df, budget)),
+            (MethodSpec(label=SURROGATE_RESHUFFLING_LABEL, color=_ALL_METHOD_COLORS[SURROGATE_RESHUFFLING_LABEL], marker="d"), post_hoc_surrogate_reshuffling_mask(df, budget)),
             (MethodSpec(label="Post-hoc ensembling", color=_ALL_METHOD_COLORS["Post-hoc ensembling"], marker="P"), post_hoc_ensemble_mask(df, budget)),
             (MethodSpec(label="Reshuffling", color=_ALL_METHOD_COLORS["Reshuffling"], marker="o"), combined_reshuffling_mask(df, budget)),
             (MethodSpec(label="Thresholdout", color=_ALL_METHOD_COLORS["Thresholdout"], marker="o"), combined_thresholdout_mask(df, budget)),
@@ -323,6 +352,13 @@ def build_all_methods_cdf_with_benchmark(df: pd.DataFrame, budget: str) -> list[
     ]
 
 
+def build_baseline_only_cdf(df: pd.DataFrame, budget: str) -> list[tuple[MethodSpec, pd.Series]]:
+    """Return only the baseline method entry — used to generate baseline-only ECDF plots."""
+    return [
+        (MethodSpec(label=BASELINE_LABEL, color=METHOD_COLORS[BASELINE_LABEL], marker="o"), combined_benchmark_mask(df, budget)),
+    ]
+
+
 def build_all_methods_delta(df: pd.DataFrame, budget: str) -> list[tuple[MethodSpec, pd.Series]]:
     budget_norm = budget.strip().lower()
     if budget_norm == "cv":
@@ -330,6 +366,7 @@ def build_all_methods_delta(df: pd.DataFrame, budget: str) -> list[tuple[MethodS
             (MethodSpec(label="Selection set", color=_ALL_METHOD_COLORS["Selection set"], marker="o"), selection_set_mask(df, budget)),
             (MethodSpec(label="1SE rule", color=_ALL_METHOD_COLORS["1SE rule"], marker="s"), one_se_mask(df, budget)),
             (MethodSpec(label="Surrogate mean", color=_ALL_METHOD_COLORS["Surrogate mean"], marker="D"), post_hoc_surrogate_mask(df, budget)),
+            (MethodSpec(label=SURROGATE_RESHUFFLING_LABEL, color=_ALL_METHOD_COLORS[SURROGATE_RESHUFFLING_LABEL], marker="d"), post_hoc_surrogate_reshuffling_mask(df, budget)),
             (MethodSpec(label="Post-hoc ensembling", color=_ALL_METHOD_COLORS["Post-hoc ensembling"], marker="P"), post_hoc_ensemble_mask(df, budget)),
             (MethodSpec(label="Makarova", color=_ALL_METHOD_COLORS["Makarova"], marker="^"), makarova_mask(df, budget)),
             (MethodSpec(label="Reshuffling", color=_ALL_METHOD_COLORS["Reshuffling"], marker="o"), combined_reshuffling_mask(df, budget)),
@@ -340,6 +377,7 @@ def build_all_methods_delta(df: pd.DataFrame, budget: str) -> list[tuple[MethodS
         return [
             (MethodSpec(label="Selection set", color=_ALL_METHOD_COLORS["Selection set"], marker="o"), selection_set_mask(df, budget)),
             (MethodSpec(label="Surrogate mean", color=_ALL_METHOD_COLORS["Surrogate mean"], marker="D"), post_hoc_surrogate_mask(df, budget)),
+            (MethodSpec(label=SURROGATE_RESHUFFLING_LABEL, color=_ALL_METHOD_COLORS[SURROGATE_RESHUFFLING_LABEL], marker="d"), post_hoc_surrogate_reshuffling_mask(df, budget)),
             (MethodSpec(label="Post-hoc ensembling", color=_ALL_METHOD_COLORS["Post-hoc ensembling"], marker="P"), post_hoc_ensemble_mask(df, budget)),
             (MethodSpec(label="Reshuffling", color=_ALL_METHOD_COLORS["Reshuffling"], marker="o"), combined_reshuffling_mask(df, budget)),
             (MethodSpec(label="Thresholdout", color=_ALL_METHOD_COLORS["Thresholdout"], marker="o"), combined_thresholdout_mask(df, budget)),

@@ -112,20 +112,19 @@ def final_rows_per_run(df: pd.DataFrame, iteration_col: str = "iteration") -> pd
         return pd.DataFrame()
 
     run_cols = run_key_columns(df)
-    work = df.copy()
-    work["__iter_num"] = pd.to_numeric(work[iteration_col], errors="coerce")
-    valid = work.loc[work["__iter_num"].notna()]
-    if valid.empty:
+    iter_num = pd.to_numeric(df[iteration_col], errors="coerce")
+    valid = iter_num.notna()
+    if not valid.any():
         return pd.DataFrame(columns=df.columns)
 
     if run_cols:
+        keys = df.loc[valid, run_cols].assign(__iter_num=iter_num[valid])
         # Avoid unobserved categorical combinations creating empty groups.
-        idx = valid.groupby(run_cols, dropna=False, observed=True)["__iter_num"].idxmax()
+        idx = keys.groupby(run_cols, dropna=False, observed=True)["__iter_num"].idxmax()
     else:
-        idx = pd.Index([valid["__iter_num"].idxmax()])
+        idx = pd.Index([iter_num[valid].idxmax()])
 
-    out = work.loc[idx].drop(columns=["__iter_num"]).reset_index(drop=True)
-    return out
+    return df.loc[idx].reset_index(drop=True)
 
 
 def _run_threshold(run_df: pd.DataFrame, score_col: str, base_threshold: float) -> float:
@@ -200,7 +199,7 @@ def filter_tunable_runs(
     keep_gids = improvement.index[(improvement > threshold).fillna(False)]
 
     keep_mask = work["__gid"].isin(keep_gids)
-    filtered = df.loc[keep_mask.to_numpy()].copy()
+    filtered = df.loc[keep_mask.to_numpy()]
 
     total_runs = int(work["__gid"].nunique())
     included = int(len(keep_gids))

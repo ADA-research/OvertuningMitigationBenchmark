@@ -56,7 +56,7 @@ def _prepare_method_metric_rows(
             .reset_index()
         )
         method_df["method_label"] = spec.label
-        method_df["method_color"] = spec.color
+        method_df["method_color"] = [spec.color] * len(method_df)
         method_df["metric_name"] = metric_label
         rows.append(method_df)
 
@@ -142,7 +142,7 @@ def plot_all_methods_average_rank_trajectory(
         if len(x_vals) == 0:
             continue
 
-        ax.plot(x_vals, y_vals, color=str(method_color), linewidth=2.0, label=str(method_label))
+        ax.plot(x_vals, y_vals, color=method_color, linewidth=2.0, label=str(method_label))
         max_iter = max(max_iter, float(np.nanmax(x_vals)))
         plotted += 1
 
