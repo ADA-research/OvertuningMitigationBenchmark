@@ -2,13 +2,13 @@ import random
 import copy
 from src.experiments.experiment import Experiment
 from src.experiments.task.task_config import TaskConfig
-
+from src.datasets.dataset_config import DatasetConfig
 
 def benchmark_one_dataset_lite(
     dataset_id,
     model_string="LGBM",
-    large_dataset=False,
-    problem_type="binary",
+    large_dataset=None, # Legacy, keep for compatibility
+    problem_type=None, # Legacy, keep for compatibility
     output_dir=".",
     model_threads=1,
 ):
@@ -25,20 +25,25 @@ def benchmark_one_dataset_lite(
     task_config = TaskConfig()
     task_config.dataset_id = dataset_id
 
+    # Get dataset specifications
+    dataset_config = DatasetConfig(dataset_id)
+    large_dataset = dataset_config.is_large()
+    problem_type = dataset_config.get_problem_type()
+
     # Constants not altered in different experiments
     task_config.problem_type = problem_type # binary, multiclass, or regression. Needs to be defined since regression/multiclass not always clear
     task_config.random_state = 78 # Global seed
     task_config.offline = False # Offline if we want to use existing model runs, but support limited for now
     task_config.racing_strategy = "none" # Racing strategy. For this benchmark, we use bergman_aggressive
     task_config.mitigation_strategy = "none" # Mitigation strategy if any. We use thresholdout and mlplan
-    task_config.offline_data_loading = False # Load data from disk (avoids openml errors/rate limits, but data needs to be in src/datasets/datasets folder)
+    task_config.offline_data_loading = False
 
     task_config.iterations = 250 # HPO iterations
     task_config.bo_initial_random_iterations = 25  # Random iterations
     task_config.smac_surrogate_model = "gaussian_process"  # We only use GP in SMAC
     task_config.smac_surrogate_random_forest_n_trees = 10 # Unused
     task_config.debug = False # If true, some debug options are activated
-    task_config.store_results_google_cloud = False # Store CSV results on GCS
+    task_config.store_results_google_cloud = True # Store CSV results on GCS
     task_config.store_vectors_google_cloud = False # Store labels/preds on GCS (but large!!)
     task_config.model_threads = max(1, int(model_threads))
 
@@ -47,6 +52,11 @@ def benchmark_one_dataset_lite(
     task_config.search_space.regressors = [model_string]
     task_config.search_space.scalers = ["StandardScaler"]
     task_config.search_space.encoders = ["OneHotEncoder"]
+
+    # Due to OOM issues, we use OrdinalEncoder for this dataset
+    if int(dataset_id) == 363683:
+        task_config.search_space.encoders = ["OrdinalEncoder"]
+
     task_config.search_space.dim_reducers = ["None"]
     task_config.search_space.feat_selectors = ["None"]
     task_config.search_space.imputers = ["NumericalSimpleImputer"]
@@ -61,6 +71,8 @@ def benchmark_one_dataset_lite(
     # We follow TabArena in the number of repeats
     # TabArena considers a dataset to be large if > 2,500 samples
     outer_n_repeats = 10 if not large_dataset else 3
+    
+    task_config.prediction_storage_precision = "float32"   
 
     if problem_type == "binary":
         metrics = ["roc_auc"]
@@ -68,8 +80,14 @@ def benchmark_one_dataset_lite(
     elif problem_type == "multiclass":
         metrics = ["neg_log_loss"]
 
+
     elif problem_type == "regression":
-        metrics = ["neg_root_mean_squared_error"] 
+        metrics = ["neg_root_mean_squared_error"]
+
+        # Predictions can be large and exceed float32 precision on this dataset
+        if int(dataset_id) == 363686:
+            task_config.prediction_storage_precision = "float64"   
+
 
     # We do 10 repeats
     for repeat_idx in range(outer_n_repeats):
@@ -105,12 +123,15 @@ def benchmark_one_dataset_lite(
                                     task_config.evaluation.n_folds = 5
                                     task_config.mitigation_strategy = "bergman_aggressive"
                                     task_config.evaluation.selection_size = None
+                                    # For Bergman, we set budget, which overrides iterations, since we can have more than 250 iterations
+                                    task_config.budget = 1250
 
                                     # RACING ENDPOINT
                                     tasks.append(copy.deepcopy(task_config))
 
                                 else:
                                     task_config.racing_strategy = "none"
+                                    task_config.budget = None # Reset budget; we use iterations
 
                                     for thresholdout in [True, False]:
 
@@ -152,9 +173,11 @@ def benchmark_one_dataset_lite(
                         task_config.racing_strategy = "none"
                         task_config.evaluation.selection_size = None
                         task_config.evaluation.reshuffle = False
+                        task_config.budget = None # Reset budget; we use iterations for MLPlan
 
                         # ENDPOINT
                         tasks.append(copy.deepcopy(task_config))
+
 
     for task in tasks:
         # Add task result path

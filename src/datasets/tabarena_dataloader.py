@@ -13,7 +13,7 @@ class TabarenaDataLoader(BaseDataLoader):
         ]
 
     def load(self, dataset_id: int, problem_type=None):
-        task = openml.tasks.get_task(dataset_id)
+        task = openml.tasks.get_task(int(dataset_id))
         dataset = task.get_dataset()
 
         X, y, _, _ = dataset.get_data(

@@ -46,6 +46,7 @@ def run_task(task_config: TaskConfig):
     # Make outer data splitter object
     outer_data_splitter = TaskDataSplitter(
         task_config.outer_evaluation,
+        task_config.problem_type,
         task_config.random_state
     )
 

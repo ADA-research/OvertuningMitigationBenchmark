@@ -13,8 +13,7 @@ class OfflineDataLoader(BaseDataLoader):
     def load(self, dataset_id: int, problem_type=None):
         if dataset_id == 1590:
             df = pd.read_csv(f'src/datasets/datasets/adult.csv')
-        elif isinstance(dataset_id, int):
-            df = pd.read_csv(f'{os.path.dirname(os.path.abspath(__file__))}/datasets/{dataset_id}.csv')
+
         else:
             df = pd.read_csv(f'src/datasets/datasets/{dataset_id}.csv')
 
@@ -38,13 +37,5 @@ class OfflineDataLoader(BaseDataLoader):
             return X, y, label_map
 
         print(dataset_id, X.shape)
-        # raise ValueError("Regression")
+
         return X, y, None
-
-
-if __name__ == "__main__":
-    task_ids = [int(x.split('.')[0]) for x in os.listdir(f'src/datasets/datasets/') if not x.startswith('adult') and not x.endswith('.zip')]
-    loader = OfflineDataLoader()
-    for task_id in task_ids:
-        loader.load(task_id)
-

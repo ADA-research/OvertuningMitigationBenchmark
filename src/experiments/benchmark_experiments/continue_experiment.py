@@ -34,8 +34,6 @@ if __name__ == '__main__':
     parser.add_argument("--experiment_name", type=str, required=True, help="Name of the experiment to continue")
     parser.add_argument("--dataset_id", type=str, required=True, help="Dataset ID of benchmark to continue")
     parser.add_argument("--model_string", type=str, required=True, help="Model string of benchmark to continue")
-    parser.add_argument("--large", action="store_true", help="Large or small dataset")
-    parser.add_argument("--problem_type", type=str, required=True, help="Problem type of benchmark to continue")
     parser.add_argument("--output_dir", type=str, default=".", help="Directory where the results folder is located")
     parser.add_argument("--n_jobs", type=int, default=DEFAULT_N_JOBS, help="Number of parallel Python jobs")
     parser.add_argument("--threads_per_job", type=int, default=1, help="Threads/CPUs allocated to each Python job")
@@ -63,8 +61,6 @@ if __name__ == '__main__':
     original_experiment = benchmark_lite.benchmark_one_dataset_lite(
         args.dataset_id,
         model_string=args.model_string,
-        large_dataset=args.large,
-        problem_type=args.problem_type,
         output_dir=args.output_dir,
         model_threads=args.threads_per_job,
     )
