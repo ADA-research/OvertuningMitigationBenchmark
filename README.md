@@ -115,9 +115,24 @@ results/LGBM_363700_YYYYMMDD_HHMMSS/
 
 The benchmark writes results locally and attempts to upload task results to Google Cloud Storage. Without the service-account file `google-cloud-phd-storage-key.json` in the repository root, uploads are disabled with a warning and the local run continues.
 
+The post-hoc ensemble and post-hoc surrogate analyses are separate from the benchmark. After each benchmark finishes, run both commands for its experiment directory before combining results:
+
+```bash
+EXPERIMENT_DIR="results/LGBM_363700_YYYYMMDD_HHMMSS"
+
+python -m src.experiments.benchmark_experiments.post_hoc_ensemble_experiment \
+    --results_dir "$EXPERIMENT_DIR" \
+    --ensemble_size 40 \
+    --n_jobs 1
+
+python -m src.experiments.benchmark_experiments.post_hoc_surrogate_experiment \
+    --results_dir "$EXPERIMENT_DIR" \
+    --n_jobs 1
+```
+
 Parallelism guidance: see [docs/parallelization.md](docs/parallelization.md).
 
-To preprocess full results, point `--results-dir` at the parent directory containing your experiment result directories. 
+To preprocess full results, point `--results-dir` at the parent directory containing your experiment result directories.
 
 ```bash
 python -m src.visualizations.preprocessing.pipeline \
@@ -150,3 +165,15 @@ python -m src.visualizations.plotting.run \
 ```
 
 Plot files are written to a timestamped folder under `src/visualizations/results/`
+
+## Citing us
+
+If you use our benchmark's code or data in a scientific publication, please cite:
+
+```bibtex
+@inproceedings{schroder2026large,
+    title={A Large-Scale Study of Overtuning Mitigation Strategies in Hyperparameter Optimization},
+    author={Schr{\"o}der, Sietse and Zellmann, Zubin and Feurer, Matthias and Baratchi, Mitra and van Rijn, Jan N and Bischl, Bernd},
+    booktitle={AutoML 2026 Methods Track}
+}
+```
