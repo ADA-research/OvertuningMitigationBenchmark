@@ -171,9 +171,12 @@ Plot files are written to a timestamped folder under `src/visualizations/results
 If you use our benchmark's code or data in a scientific publication, please cite:
 
 ```bibtex
-@inproceedings{schroder2026large,
-    title={A Large-Scale Study of Overtuning Mitigation Strategies in Hyperparameter Optimization},
-    author={Schr{\"o}der, Sietse and Zellmann, Zubin and Feurer, Matthias and Baratchi, Mitra and van Rijn, Jan N and Bischl, Bernd},
-    booktitle={AutoML 2026 Methods Track}
+@inproceedings{
+schroder2026a,
+title={A Large-Scale Study of Overtuning Mitigation Strategies in Hyperparameter Optimization},
+author={Sietse Schr{\"o}der and Zubin Zellmann and Matthias Feurer and Mitra Baratchi and Jan N. van Rijn and Bernd Bischl},
+booktitle={AutoML 2026 Methods Track},
+year={2026},
+url={https://openreview.net/forum?id=pX6n6ca762}
 }
 ```
