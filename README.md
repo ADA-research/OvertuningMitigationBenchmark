@@ -151,9 +151,8 @@ The visualization release consists of two gzip-compressed CSV files:
 
 These results can be obtained by running the benchmark. Alternatively, we have released them for our full benchmark and they can be downloaded here:
 
-Download trajectories.csv.gz
-
-Download preprocessed_results.csv.gz
+- [trajectories.csv.gz](https://github.com/ADA-research/OvertuningMitigationBenchmark/releases/download/v1.0.0/trajectories.csv.gz)
+- [preprocessed_results.csv.gz](https://github.com/ADA-research/OvertuningMitigationBenchmark/releases/download/v1.0.0/preprocessed_results.csv.gz)
 
 The detailed column definitions and row meanings are in [docs/result_tables.md](docs/result_tables.md). We do not publish the full results and artifacts, including labels and model predictions. Please contact us if you would like to use them. With these two files present in `src/visualizations/data`, you can run the plotting pipeline with:
 
