@@ -1,9 +1,10 @@
-import os
 import argparse
 from pathlib import Path
 
 from src.visualizations.preprocessing.preprocessing import preprocess_multiple_experiments
 from src.visualizations.preprocessing.shared_utils import (
+    RESULTS_FILE,
+    TRAJECTORIES_FILE,
     get_experiment_dataset_id,
     is_small_dataset,
 )
@@ -21,12 +22,19 @@ def include_experiment_dir(experiment_dir_name: str) -> bool:
     return True
 
 
-def count_csv_rows(csv_path: Path) -> int:
-    if not csv_path.exists():
-        return 0
-    with csv_path.open("r", encoding="utf-8") as handle:
-        # Subtract header; clamp at 0 for empty files.
-        return max(0, sum(1 for _ in handle) - 1)
+def discover_experiment_dirs(results_dir: Path) -> list[Path]:
+    if not results_dir.is_dir():
+        raise FileNotFoundError(f"Full results directory not found: {results_dir}")
+
+    experiment_dirs = [
+        path
+        for path in sorted(results_dir.iterdir())
+        if path.is_dir() and include_experiment_dir(path.name)
+    ]
+    if not experiment_dirs:
+        raise ValueError(f"No experiment directories found in: {results_dir}")
+    return experiment_dirs
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
@@ -40,33 +48,32 @@ if __name__ == "__main__":
             "even if preprocessed files already exist."
         ),
     )
+    parser.add_argument(
+        "--results-dir",
+        type=Path,
+        default=Path("results"),
+        help="Parent directory containing full experiment result directories (default: results)",
+    )
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=Path("src/visualizations/data"),
+        help="Directory for the combined gzip CSV outputs (default: src/visualizations/data)",
+    )
     args = parser.parse_args()
 
-    experiment_dirs = [
-        f"results_prd/{experiment_dir_name}"
-        for experiment_dir_name in sorted(os.listdir("results_prd"))
-        if include_experiment_dir(experiment_dir_name)
-    ]
+    try:
+        experiment_dirs = discover_experiment_dirs(args.results_dir)
+    except (FileNotFoundError, ValueError) as exc:
+        parser.error(str(exc))
 
     preprocess_multiple_experiments(
-        experiment_dirs=experiment_dirs,
-        output_path="src/visualizations/data",
+        experiment_dirs=[str(path) for path in experiment_dirs],
+        output_path=str(args.output_dir),
         recalculate=args.recalculate,
-        return_combined_dataframes=False,
     )
 
-    output_dir = Path("src/visualizations/data")
-    results_shape = (count_csv_rows(output_dir / "preprocessed_results.csv"), "?")
-    trajectories_shape = (count_csv_rows(output_dir / "trajectories.csv"), "?")
-
-    print(f"Results rows: {results_shape[0]}")
-    print(f"Trajectories rows: {trajectories_shape[0]}")
     print(
-        "Saved combined outputs to src/visualizations/data/preprocessed_results.csv, "
-        "src/visualizations/data/trajectories.csv, "
-        "src/visualizations/data/trajectories_surrogate_selection.csv, "
-        "src/visualizations/data/trajectories_one_se_selection.csv, "
-        "src/visualizations/data/trajectories_makarova.csv, "
-        "src/visualizations/data/trajectories_post_hoc_ensemble.csv (if present), and "
-        "src/visualizations/data/trajectories_post_hoc_surrogate.csv (if present)"
+        f"Saved combined outputs to {args.output_dir / RESULTS_FILE} "
+        f"and {args.output_dir / TRAJECTORIES_FILE}"
     )

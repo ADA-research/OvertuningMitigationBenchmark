@@ -165,7 +165,7 @@ def plot_pairwise_wilcoxon_matrix(
     fig, ax = plt.subplots(figsize=(width, height))
     ax.imshow(value_matrix, cmap=cmap, norm=norm)
     ax.set_aspect("auto")
-    ax.set_xticks(range(len(methods_x)), labels=methods_x, rotation=30, ha="right")
+    ax.set_xticks(range(len(methods_x)), labels=methods_x, rotation=25, ha="right")
     ax.set_yticks(range(len(methods_y)), labels=methods_y)
 
     for row in range(len(methods_y)):
@@ -177,7 +177,7 @@ def plot_pairwise_wilcoxon_matrix(
                 annotation_matrix[row][col],
                 ha="center",
                 va="center",
-                fontsize=11.0,
+                fontsize=10.0,
                 color=text_color,
             )
 

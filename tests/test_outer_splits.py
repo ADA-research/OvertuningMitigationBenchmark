@@ -22,7 +22,7 @@ class TestHoldoutSplitter:
     def test_basic_split_sizes(self):
         X, y = make_data(n=1000)
         cfg = OuterEvaluationConfig(resampling="holdout", train_size=0.7)
-        splitter = TaskDataSplitter(cfg, random_state=42)
+        splitter = TaskDataSplitter(cfg, problem_type="binary", random_state=42)
         X_train, X_test, y_train, y_test = splitter.make_outer_split(X, y)
 
         assert len(X_train) == 700
@@ -33,7 +33,7 @@ class TestHoldoutSplitter:
     def test_no_overlap_between_train_and_test(self):
         X, y = make_data(n=500)
         cfg = OuterEvaluationConfig(resampling="holdout", train_size=0.8)
-        splitter = TaskDataSplitter(cfg, random_state=0)
+        splitter = TaskDataSplitter(cfg, problem_type="binary", random_state=0)
         X_train, X_test, y_train, y_test = splitter.make_outer_split(X, y)
 
         train_idx = set(X_train.index)
@@ -43,7 +43,7 @@ class TestHoldoutSplitter:
     def test_covers_all_samples(self):
         X, y = make_data(n=500)
         cfg = OuterEvaluationConfig(resampling="holdout", train_size=0.8)
-        splitter = TaskDataSplitter(cfg, random_state=0)
+        splitter = TaskDataSplitter(cfg, problem_type="binary", random_state=0)
         X_train, X_test, _, _ = splitter.make_outer_split(X, y)
 
         assert len(X_train) + len(X_test) == len(X)
@@ -52,8 +52,8 @@ class TestHoldoutSplitter:
         X, y = make_data(n=1000)
         cfg = OuterEvaluationConfig(resampling="holdout", train_size=0.7)
 
-        s1 = TaskDataSplitter(cfg, random_state=42)
-        s2 = TaskDataSplitter(cfg, random_state=42)
+        s1 = TaskDataSplitter(cfg, problem_type="binary", random_state=42)
+        s2 = TaskDataSplitter(cfg, problem_type="binary", random_state=42)
 
         Xt1, _, yt1, _ = s1.make_outer_split(X, y)
         Xt2, _, yt2, _ = s2.make_outer_split(X, y)
@@ -65,8 +65,8 @@ class TestHoldoutSplitter:
         X, y = make_data(n=1000)
         cfg = OuterEvaluationConfig(resampling="holdout", train_size=0.7)
 
-        s1 = TaskDataSplitter(cfg, random_state=1)
-        s2 = TaskDataSplitter(cfg, random_state=2)
+        s1 = TaskDataSplitter(cfg, problem_type="binary", random_state=1)
+        s2 = TaskDataSplitter(cfg, problem_type="binary", random_state=2)
 
         Xt1, _, _, _ = s1.make_outer_split(X, y)
         Xt2, _, _, _ = s2.make_outer_split(X, y)
@@ -76,7 +76,7 @@ class TestHoldoutSplitter:
     def test_absolute_train_size(self):
         X, y = make_data(n=1000)
         cfg = OuterEvaluationConfig(resampling="holdout", train_size=600)
-        splitter = TaskDataSplitter(cfg, random_state=42)
+        splitter = TaskDataSplitter(cfg, problem_type="binary", random_state=42)
         X_train, X_test, _, _ = splitter.make_outer_split(X, y)
 
         assert len(X_train) == 600
@@ -90,7 +90,7 @@ class TestHoldoutSplitter:
         """
         X, y = make_data(n=1000)
         cfg = OuterEvaluationConfig(resampling="holdout", train_size=0)
-        splitter = TaskDataSplitter(cfg, random_state=78)
+        splitter = TaskDataSplitter(cfg, problem_type="binary", random_state=78)
 
         with pytest.raises((ValueError, Exception)):
             splitter.make_outer_split(X, y)
@@ -107,7 +107,7 @@ class TestCVSplitter:
             fold=0,
             repeat=0,
         )
-        splitter = TaskDataSplitter(cfg, random_state=78)
+        splitter = TaskDataSplitter(cfg, problem_type="binary", random_state=78)
         X_train, X_test, y_train, y_test = splitter.make_outer_split(X, y)
 
         assert abs(len(X_test) - 300) <= 1  # allow ±1 for rounding
@@ -115,7 +115,7 @@ class TestCVSplitter:
     def test_cv_no_overlap(self):
         X, y = make_data(n=600)
         cfg = OuterEvaluationConfig(resampling="cv", n_folds=3, n_repeats=1, fold=0, repeat=0)
-        splitter = TaskDataSplitter(cfg, random_state=78)
+        splitter = TaskDataSplitter(cfg, problem_type="binary", random_state=78)
         X_train, X_test, _, _ = splitter.make_outer_split(X, y)
 
         assert len(set(X_train.index) & set(X_test.index)) == 0
@@ -123,7 +123,7 @@ class TestCVSplitter:
     def test_cv_covers_all_samples(self):
         X, y = make_data(n=600)
         cfg = OuterEvaluationConfig(resampling="cv", n_folds=3, n_repeats=1, fold=0, repeat=0)
-        splitter = TaskDataSplitter(cfg, random_state=78)
+        splitter = TaskDataSplitter(cfg, problem_type="binary", random_state=78)
         X_train, X_test, _, _ = splitter.make_outer_split(X, y)
 
         assert len(X_train) + len(X_test) == len(X)
@@ -133,8 +133,8 @@ class TestCVSplitter:
         X, y = make_data(n=600)
         cfg = OuterEvaluationConfig(resampling="cv", n_folds=3, n_repeats=5, fold=1, repeat=2)
 
-        s1 = TaskDataSplitter(cfg, random_state=78)
-        s2 = TaskDataSplitter(cfg, random_state=78)
+        s1 = TaskDataSplitter(cfg, problem_type="binary", random_state=78)
+        s2 = TaskDataSplitter(cfg, problem_type="binary", random_state=78)
 
         Xt1, XT1, yt1, yT1 = s1.make_outer_split(X, y)
         Xt2, XT2, yt2, yT2 = s2.make_outer_split(X, y)
@@ -150,7 +150,7 @@ class TestCVSplitter:
         splits = []
         for fold in range(3):
             cfg = OuterEvaluationConfig(**base_cfg, fold=fold)
-            splitter = TaskDataSplitter(cfg, random_state=78)
+            splitter = TaskDataSplitter(cfg, problem_type="binary", random_state=78)
             _, X_test, _, _ = splitter.make_outer_split(X, y)
             splits.append(set(X_test.index))
 
@@ -166,8 +166,8 @@ class TestCVSplitter:
         cfg0 = OuterEvaluationConfig(resampling="cv", n_folds=3, n_repeats=10, fold=0, repeat=0)
         cfg1 = OuterEvaluationConfig(resampling="cv", n_folds=3, n_repeats=10, fold=0, repeat=1)
 
-        s0 = TaskDataSplitter(cfg0, random_state=78)
-        s1 = TaskDataSplitter(cfg1, random_state=78)
+        s0 = TaskDataSplitter(cfg0, problem_type="binary", random_state=78)
+        s1 = TaskDataSplitter(cfg1, problem_type="binary", random_state=78)
 
         _, X_test0, _, _ = s0.make_outer_split(X, y)
         _, X_test1, _, _ = s1.make_outer_split(X, y)
@@ -184,7 +184,7 @@ class TestCVSplitter:
         test_sets = []
         for repeat in range(10):
             cfg = OuterEvaluationConfig(resampling="cv", n_folds=3, n_repeats=10, fold=0, repeat=repeat)
-            splitter = TaskDataSplitter(cfg, random_state=78)
+            splitter = TaskDataSplitter(cfg, problem_type="binary", random_state=78)
             _, X_test, _, _ = splitter.make_outer_split(X, y)
             test_sets.append(frozenset(X_test.index))
 
@@ -196,7 +196,7 @@ class TestCVSplitter:
     def test_cv_invalid_fold_raises(self):
         X, y = make_data(n=300)
         cfg = OuterEvaluationConfig(resampling="cv", n_folds=3, n_repeats=1, fold=5, repeat=0)
-        splitter = TaskDataSplitter(cfg, random_state=78)
+        splitter = TaskDataSplitter(cfg, problem_type="binary", random_state=78)
 
         with pytest.raises(ValueError):
             splitter.make_outer_split(X, y)
@@ -213,11 +213,147 @@ class TestCVSplitter:
         X, y, _ = loader.load(1590, problem_type="binary")
 
         cfg = OuterEvaluationConfig(resampling="cv", n_folds=3, n_repeats=10, fold=0, repeat=0)
-        s1 = TaskDataSplitter(cfg, random_state=78)
-        s2 = TaskDataSplitter(cfg, random_state=78)
+        s1 = TaskDataSplitter(cfg, problem_type="binary", random_state=78)
+        s2 = TaskDataSplitter(cfg, problem_type="binary", random_state=78)
 
         Xt1, Xtest1, _, _ = s1.make_outer_split(X, y)
         Xt2, Xtest2, _, _ = s2.make_outer_split(X, y)
 
         assert list(Xt1.index) == list(Xt2.index)
         assert list(Xtest1.index) == list(Xtest2.index)
+
+
+def _class_proportions(y: pd.Series) -> dict:
+    """Return {class_label: proportion} rounded to 2 decimals."""
+    counts = y.value_counts(normalize=True)
+    return {k: round(v, 2) for k, v in counts.items()}
+
+
+def _make_imbalanced_classification_data(n=1000, seed=42):
+    """Create a binary dataset with 70/30 class imbalance."""
+    rng = np.random.default_rng(seed)
+    X = pd.DataFrame(rng.standard_normal((n, 5)), columns=[f"f{i}" for i in range(5)])
+    y = pd.Series(
+        rng.choice([0, 1], size=n, p=[0.7, 0.3]),
+        name="target",
+    )
+    return X, y
+
+
+def _make_regression_data(n=1000, seed=42):
+    """Create a continuous-valued regression target."""
+    rng = np.random.default_rng(seed)
+    X = pd.DataFrame(rng.standard_normal((n, 5)), columns=[f"f{i}" for i in range(5)])
+    y = pd.Series(rng.standard_normal(n), name="target")
+    return X, y
+
+
+class TestStratifiedSplitting:
+    """Verify that classification splits are stratified and regression splits are not."""
+
+    # ── Holdout ──────────────────────────────────────────────────────────
+
+    def test_holdout_classification_preserves_class_proportions(self):
+        """For classification, train and test class ratios should match the overall ratio."""
+        X, y = _make_imbalanced_classification_data(n=2000)
+        overall = _class_proportions(y)
+
+        cfg = OuterEvaluationConfig(resampling="holdout", train_size=0.5)
+        splitter = TaskDataSplitter(cfg, problem_type="binary", random_state=42)
+        _, _, y_train, y_test = splitter.make_outer_split(X, y)
+
+        # With stratification the proportions should be very close (within 2 pp)
+        for cls in overall:
+            assert abs(_class_proportions(y_train)[cls] - overall[cls]) <= 0.02
+            assert abs(_class_proportions(y_test)[cls] - overall[cls]) <= 0.02
+
+    def test_holdout_regression_does_not_stratify(self):
+        """Regression holdout must not pass stratify (would raise on continuous y)."""
+        X, y = _make_regression_data(n=500)
+        cfg = OuterEvaluationConfig(resampling="holdout", train_size=0.5)
+        splitter = TaskDataSplitter(cfg, problem_type="regression", random_state=42)
+
+        # Should succeed without error — stratify=None for regression
+        X_train, X_test, y_train, y_test = splitter.make_outer_split(X, y)
+        assert len(X_train) + len(X_test) == len(X)
+
+    def test_holdout_regression_with_stratify_would_fail(self):
+        """Confirm that stratifying on a continuous target raises an error."""
+        X, y = _make_regression_data(n=500)
+        cfg = OuterEvaluationConfig(resampling="holdout", train_size=0.5)
+
+        # Force classification mode on regression data → must raise
+        splitter = TaskDataSplitter(cfg, problem_type="binary", random_state=42)
+        with pytest.raises(ValueError):
+            splitter.make_outer_split(X, y)
+
+    # ── CV ───────────────────────────────────────────────────────────────
+
+    def test_cv_classification_preserves_class_proportions(self):
+        """StratifiedKFold should keep class proportions in every fold."""
+        X, y = _make_imbalanced_classification_data(n=1200)
+        overall = _class_proportions(y)
+
+        for fold in range(3):
+            cfg = OuterEvaluationConfig(
+                resampling="cv", n_folds=3, n_repeats=1, fold=fold, repeat=0,
+            )
+            splitter = TaskDataSplitter(cfg, problem_type="binary", random_state=78)
+            _, _, y_train, y_test = splitter.make_outer_split(X, y)
+
+            for cls in overall:
+                assert abs(_class_proportions(y_train)[cls] - overall[cls]) <= 0.02
+                assert abs(_class_proportions(y_test)[cls] - overall[cls]) <= 0.02
+
+    def test_cv_regression_uses_plain_kfold(self):
+        """Regression CV must work without error on continuous targets."""
+        X, y = _make_regression_data(n=600)
+        cfg = OuterEvaluationConfig(
+            resampling="cv", n_folds=3, n_repeats=1, fold=0, repeat=0,
+        )
+        splitter = TaskDataSplitter(cfg, problem_type="regression", random_state=78)
+
+        X_train, X_test, _, _ = splitter.make_outer_split(X, y)
+        assert len(X_train) + len(X_test) == len(X)
+
+    def test_cv_repeated_classification_preserves_class_proportions(self):
+        """RepeatedStratifiedKFold should preserve proportions across repeats."""
+        X, y = _make_imbalanced_classification_data(n=1200)
+        overall = _class_proportions(y)
+
+        for repeat in range(3):
+            cfg = OuterEvaluationConfig(
+                resampling="cv", n_folds=3, n_repeats=3, fold=0, repeat=repeat,
+            )
+            splitter = TaskDataSplitter(cfg, problem_type="binary", random_state=78)
+            _, _, y_train, y_test = splitter.make_outer_split(X, y)
+
+            for cls in overall:
+                assert abs(_class_proportions(y_train)[cls] - overall[cls]) <= 0.02
+                assert abs(_class_proportions(y_test)[cls] - overall[cls]) <= 0.02
+
+    def test_cv_repeated_regression_uses_plain_repeated_kfold(self):
+        """RepeatedKFold on continuous targets must succeed."""
+        X, y = _make_regression_data(n=600)
+        cfg = OuterEvaluationConfig(
+            resampling="cv", n_folds=3, n_repeats=5, fold=1, repeat=2,
+        )
+        splitter = TaskDataSplitter(cfg, problem_type="regression", random_state=78)
+
+        X_train, X_test, _, _ = splitter.make_outer_split(X, y)
+        assert len(X_train) + len(X_test) == len(X)
+
+    def test_multiclass_holdout_preserves_proportions(self):
+        """Stratification should also work for multiclass problems."""
+        rng = np.random.default_rng(99)
+        X = pd.DataFrame(rng.standard_normal((1500, 5)), columns=[f"f{i}" for i in range(5)])
+        y = pd.Series(rng.choice([0, 1, 2], size=1500, p=[0.5, 0.3, 0.2]), name="target")
+        overall = _class_proportions(y)
+
+        cfg = OuterEvaluationConfig(resampling="holdout", train_size=0.5)
+        splitter = TaskDataSplitter(cfg, problem_type="multiclass", random_state=42)
+        _, _, y_train, y_test = splitter.make_outer_split(X, y)
+
+        for cls in overall:
+            assert abs(_class_proportions(y_train)[cls] - overall[cls]) <= 0.03
+            assert abs(_class_proportions(y_test)[cls] - overall[cls]) <= 0.03

@@ -11,6 +11,7 @@ from ..filters import final_rows_per_run
 from ..methods import (
     BERGMAN_LABEL,
     BERGMAN_RESHUFFLING_LABEL,
+    SURROGATE_RESHUFFLING_LABEL,
     BASELINE_LABEL,
     MLPLAN_LABEL,
     method_color,
@@ -24,6 +25,7 @@ from ..methods import (
     one_se_mask,
     post_hoc_ensemble_mask,
     post_hoc_surrogate_mask,
+    post_hoc_surrogate_reshuffling_mask,
     selection_set_mask,
 )
 
@@ -38,6 +40,7 @@ class CDDiagramStats:
 
 _PAIR_COLS = ["dataset_id", "optimizer", "repetition", "outer_fold"]
 _CD_BERGMAN_RESHUFFLING_LABEL = BERGMAN_RESHUFFLING_LABEL.replace("\n", " ")
+_CD_SURROGATE_RESHUFFLING_LABEL = SURROGATE_RESHUFFLING_LABEL.replace("\n", " ")
 
 
 def _pair_cols(df: pd.DataFrame) -> list[str]:
@@ -59,6 +62,8 @@ def _base_method_label(label: str) -> str:
         return "Selection set"
     if text.startswith("1SE rule"):
         return "1SE rule"
+    if text.startswith("Surrogate mean +"):
+        return _CD_SURROGATE_RESHUFFLING_LABEL
     if text.startswith("Surrogate mean"):
         return "Surrogate mean"
     if text.startswith("Post-hoc ensembling"):
@@ -375,12 +380,13 @@ def _build_method_specs(
 
     specs: list[tuple[str, pd.Series, pd.Series, str, str]] = [
         # -- Common comparator method --
-        ("Baseline (holdout)", common_bench, common_bench, "retrain_test_loss", common_bench_col),
+        ("Baseline (H)", common_bench, common_bench, "retrain_test_loss", common_bench_col),
         # -- CV baseline and CV methods (ensemble score; no CV retrain path) --
         ("Baseline (CV)", cv_bench, common_bench, "ensembled_test_loss", common_bench_col),
         ("Selection set (CV)", selection_set_mask(final_df, "cv"), common_bench, "ensembled_test_loss", common_bench_col),
         ("1SE rule", one_se_mask(final_df, "cv"), common_bench, "ensembled_test_loss", common_bench_col),
         ("Surrogate mean (CV)", post_hoc_surrogate_mask(final_df, "cv"), common_bench, "ensembled_test_loss", common_bench_col),
+        (_CD_SURROGATE_RESHUFFLING_LABEL + " (CV)", post_hoc_surrogate_reshuffling_mask(final_df, "cv"), common_bench, "ensembled_test_loss", common_bench_col),
         ("Post-hoc ensembling (CV)", post_hoc_ensemble_mask(final_df, "cv"), common_bench, "ensembled_test_loss", common_bench_col),
         ("Makarova", makarova_mask(final_df, "cv"), common_bench, "ensembled_test_loss", common_bench_col),
         (MLPLAN_LABEL, mlplan_mask(final_df), common_bench, "ensembled_test_loss", common_bench_col),
@@ -388,10 +394,11 @@ def _build_method_specs(
         (BERGMAN_LABEL, combined_bergman_mask(final_df, "cv"), common_bench, "ensembled_test_loss", common_bench_col),
         (_CD_BERGMAN_RESHUFFLING_LABEL, combined_bergman_reshuffling_mask(final_df, "cv"), common_bench, "ensembled_test_loss", common_bench_col),
         # -- Holdout methods (retrain test loss) --
-        ("Selection set (holdout)", selection_set_mask(final_df, "holdout"), common_bench, "retrain_test_loss", common_bench_col),
-        ("Surrogate mean (holdout)", post_hoc_surrogate_mask(final_df, "holdout"), common_bench, "retrain_test_loss", common_bench_col),
-        ("Post-hoc ensembling (holdout)", post_hoc_ensemble_mask(final_df, "holdout"), common_bench, "retrain_test_loss", common_bench_col),
-        ("Reshuffling (holdout)", combined_reshuffling_mask(final_df, "holdout"), common_bench, "retrain_test_loss", common_bench_col),
+        ("Selection set (H)", selection_set_mask(final_df, "holdout"), common_bench, "retrain_test_loss", common_bench_col),
+        ("Surrogate mean (H)", post_hoc_surrogate_mask(final_df, "holdout"), common_bench, "retrain_test_loss", common_bench_col),
+        (_CD_SURROGATE_RESHUFFLING_LABEL + " (H)", post_hoc_surrogate_reshuffling_mask(final_df, "holdout"), common_bench, "retrain_test_loss", common_bench_col),
+        ("Post-hoc ensembling (H)", post_hoc_ensemble_mask(final_df, "holdout"), common_bench, "retrain_test_loss", common_bench_col),
+        ("Reshuffling (H)", combined_reshuffling_mask(final_df, "holdout"), common_bench, "retrain_test_loss", common_bench_col),
         ("Thresholdout", combined_thresholdout_mask(final_df, "holdout"), common_bench, "retrain_test_loss", common_bench_col),
     ]
 

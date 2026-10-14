@@ -200,3 +200,5 @@ experiments/smac3_output
 
 smac3_output
 catboost_info
+src/visualizations/data/preprocessed_results.csv.gz
+src/visualizations/data/trajectories.csv.gz

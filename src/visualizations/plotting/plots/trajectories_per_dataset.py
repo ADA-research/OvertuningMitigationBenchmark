@@ -40,6 +40,7 @@ def _budget_title_suffix(budget: str) -> str:
 def plot_benchmark_dataset_trajectory(
     trajectories_subset: pd.DataFrame,
     dataset_label: str,
+    model_label: str,
     budget: str,
     iteration_col: str = "iteration",
     val_col: str = "val_performance",
@@ -104,15 +105,15 @@ def plot_benchmark_dataset_trajectory(
     run_count = benchmark_df[run_keys].drop_duplicates().shape[0] if run_keys else 0
 
     ax.set_title(
-        f"{dataset_label} - LightGBM - {_budget_title_suffix(budget)}",
+        f"{dataset_label} - {model_label} - {_budget_title_suffix(budget)}",
         fontweight="normal",
         fontsize=16,
     )
     ax.set_xlabel("Iteration", fontsize=16)
     ax.set_ylabel("Error", fontsize=16)
-    ax.tick_params(axis="both", labelsize=13)
+    ax.tick_params(axis="both", labelsize=16)
     ax.grid(True, alpha=0.3, linestyle="--")
-    ax.legend(loc="best", fontsize=13, framealpha=0.88)
+    ax.legend(loc="best", fontsize=16, framealpha=0.88)
     fig.tight_layout()
 
     return fig, BenchmarkTrajectoryStats(runs=run_count, points=len(agg))

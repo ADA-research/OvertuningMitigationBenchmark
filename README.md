@@ -10,7 +10,7 @@ Tested and working with **Python 3.11.3 on WSL** (Windows Subsystem for Linux).
 
 ```bash
 git clone https://github.com/ADA-research/OvertuningMitigationBenchmark.git
-cd OvertuningBenchmark
+cd OvertuningMitigationBenchmark
 ```
 
 ### 2. Install system dependencies
@@ -45,14 +45,17 @@ pip install IPython
 ## Repository Structure
 
 ```
-OvertuningBenchmark/
+OvertuningMitigationBenchmark/
+├── LICENSE
 ├── README.md
 ├── requirements.txt
 ├── docs/
 │   ├── datasets.md
 │   ├── normalization.md
 │   ├── parallelization.md
-│   └── preprocessing.md
+│   ├── plotting.md
+│   ├── reproducability.md
+│   └── result_tables.md
 ├── src/
 │   ├── datasets/
 │   ├── evaluators/
@@ -67,16 +70,15 @@ OvertuningBenchmark/
 │   ├── target/
 │   ├── utils/
 │   └── visualizations/
+│       ├── data/
+│       ├── plotting/
+│       └── preprocessing/
 └── tests/
 ```
 
+### Data access
 
-### Data assumptions
-
-- Minimal local profile: `adult.csv`, `ilpd.csv`, and `363700.csv` in `src/datasets/datasets/`
-- Full profile: all benchmark dataset CSVs pulled via Git LFS
-
-The current test suite supports the minimal local profile and skips/tests-gates full-dataset-only checks.
+Benchmark tasks are retrieved from OpenML. The machine running an experiment needs internet access, and `--dataset_id` must be an OpenML task ID. The benchmark infers the problem type from the dataset ID; the benchmark CLI does not accept a `--problem_type` option.
 
 ### 0. Activate environment
 
@@ -94,13 +96,12 @@ python -m pytest -q
 
 ### 2. Run benchmark experiments
 
-Example: run LGBM on dataset `363700` (binary).
+Example: run the full benchmark for LGBM on OpenML task `363700` (binary).
 
 ```bash
 python -m src.experiments.benchmark_experiments.start_experiment \
     --dataset_id 363700 \
     --model_string LGBM \
-    --problem_type binary \
     --output_dir . \
     --n_jobs 1 \
     --threads_per_job 1
@@ -111,67 +112,71 @@ This creates a timestamped experiment folder under `results`, for example:
 ```text
 results/LGBM_363700_YYYYMMDD_HHMMSS/
 ```
-Parallelism guidance: see [docs/parallelization.md](docs/parallelization.md).
 
-Since the experiments take long, we have added a sample of results for one dataset/model combination to the repository. Using those results, you should be able to run the preprocessing and visualization pipeline. 
+The benchmark writes results locally and attempts to upload task results to Google Cloud Storage. Without the service-account file `google-cloud-phd-storage-key.json` in the repository root, uploads are disabled with a warning and the local run continues.
 
-
-### 3. Run per-experiment post-hoc preprocessing
-
-You can run both post-hoc methods for each experiment directory you want to include. The results for this are already included in the repo, so you do not need to rerun these to obtain some visualizations. If you actually run a full experiment using the command above, you can apply post hoc ensembling or post hoc surrogate incumbent selection using the commands below. Note that by default, results get stored in the /results folder, while the visualziation works on the results_prd folder. This is to preserve integrety of the /results_prd folder, so if you run this yourself, make sure to move the full experiment to the results_prd folder.
-
-Single experiment:
+The post-hoc ensemble and post-hoc surrogate analyses are separate from the benchmark. After each benchmark finishes, run both commands for its experiment directory before combining results:
 
 ```bash
+EXPERIMENT_DIR="results/LGBM_363700_YYYYMMDD_HHMMSS"
+
 python -m src.experiments.benchmark_experiments.post_hoc_ensemble_experiment \
-    --results_dir results/LGBM_363700 \
+    --results_dir "$EXPERIMENT_DIR" \
     --ensemble_size 40 \
     --n_jobs 1
 
 python -m src.experiments.benchmark_experiments.post_hoc_surrogate_experiment \
-    --results_dir results/LGBM_363700 \
+    --results_dir "$EXPERIMENT_DIR" \
     --n_jobs 1
 ```
 
-These create per-experiment files such as:
+Parallelism guidance: see [docs/parallelization.md](docs/parallelization.md).
 
-- `trajectories_post_hoc_ensemble.csv`
-- `results_post_hoc_ensemble.csv`
-- `trajectories_post_hoc_surrogate.csv`
-- `results_post_hoc_surrogate.csv`
-
-### 4. Combine preprocessing outputs for plotting
-
-The preprocessing pipeline scans all folders directly inside `results_prd/` and writes combined CSVs to `src/visualizations/data`.
+To preprocess full results, point `--results-dir` at the parent directory containing your experiment result directories.
 
 ```bash
-python -m src.visualizations.preprocessing.pipeline
+python -m src.visualizations.preprocessing.pipeline \
+    --results-dir results \
+    --output-dir src/visualizations/data
 ```
 
-Notes:
-Please do not use --recalculate as it collects raw results, which are not present because of their large size. Instead, just run the command above to create combined files. 
-- `--recalculate` recomputes per-experiment preprocessing from raw artifacts.
-- Without `--recalculate`, existing preprocessed per-experiment files are reused.
-- Post-hoc files are aggregated automatically when present.
+The output directory receives `preprocessed_results.csv.gz` and `trajectories.csv.gz`.
 
+### 3. Released Result Tables and Plotting Pipeline
 
-### 5. Generate plots
+The visualization release consists of two gzip-compressed CSV files:
 
-Generate core plots:
+- `preprocessed_results.csv.gz`: fold-level/configuration results, used as a compact analysis table and as the normalization-anchor source.
+- `trajectories.csv.gz`: iteration-by-iteration incumbent results for each included method; this is the input used by the plotting pipeline.
+
+These results can be obtained by running the benchmark. Alternatively, we have released them for our full benchmark and they can be downloaded here:
+
+Download trajectories.csv.gz
+
+Download preprocessed_results.csv.gz
+
+The detailed column definitions and row meanings are in [docs/result_tables.md](docs/result_tables.md). We do not publish the full results and artifacts, including labels and model predictions. Please contact us if you would like to use them. With these two files present in `src/visualizations/data`, you can run the plotting pipeline with:
 
 ```bash
 python -m src.visualizations.plotting.run \
     --data-dir src/visualizations/data \
-    --output-root src/visualizations/results
-    --partial
-```
-Please use the --partial flag to omit certain graphs that aggregate over multiple datasets or models, since in the partial results we only have one combination.
-
-Outputs are written to a timestamped folder:
-
-```text
-src/visualizations/results/plotting_results_YYYYMMDD_HHMMSS/
+    --output-root src/visualizations/results \
+    --prod
 ```
 
-### 5. Notes on full data
-This script only showcases the functionality to generate plots from raw results. Since our complete raw results exceed 500GB, and the preprocessed results exceed 10GB, we are working on a way to compress and share this in a cost-efficient way, but we are not able to do that fully and anonymously at this moment, which is why we provide a sample of results. 
+Plot files are written to a timestamped folder under `src/visualizations/results/`
+
+## Citing us
+
+If you use our benchmark's code or data in a scientific publication, please cite:
+
+```bibtex
+@inproceedings{
+schroder2026a,
+title={A Large-Scale Study of Overtuning Mitigation Strategies in Hyperparameter Optimization},
+author={Sietse Schr{\"o}der and Zubin Zellmann and Matthias Feurer and Mitra Baratchi and Jan N. van Rijn and Bernd Bischl},
+booktitle={AutoML 2026 Methods Track},
+year={2026},
+url={https://openreview.net/forum?id=pX6n6ca762}
+}
+```

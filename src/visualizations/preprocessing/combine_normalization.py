@@ -2,15 +2,15 @@
 Post-combine normalization for trajectory files.
 
 Normalizes all trajectory columns using a global empirical range built from ALL
-observed raw model scores (not just incumbents).  Normalization is applied once,
-after all per-experiment outputs have been concatenated into the combined files.
+observed raw model scores (not just incumbents).  Normalization is applied while
+the per-experiment trajectories are streamed into the combined trajectories file.
 
 The anchor source is preprocessed_results.csv, which contains one row per
 configuration per experiment (all evaluated models, all iterations).  Using this
 full set gives a true empirical [min, max] range so that every model – including
 very poor ones – falls inside the [0, 1] band.
 
-Normalized columns written to every combined trajectory file:
+Normalized columns written for every trajectory method:
     normalized_val_loss
     normalized_retrain_test_loss
     normalized_ensembled_test_loss
@@ -26,25 +26,13 @@ Important normalization contract:
 from __future__ import annotations
 
 from pathlib import Path
-from typing import List, Optional
-
-import os
-import tempfile
+from typing import List
 
 import numpy as np
 import pandas as pd
 
 
 GROUP_COLS = ["dataset_id", "repetition", "outer_fold", "metric", "model"]
-
-COMBINED_TRAJECTORY_FILES = [
-    "trajectories.csv",
-    "trajectories_one_se_selection.csv",
-    "trajectories_makarova.csv",
-    "trajectories_post_hoc_surrogate.csv",
-    "trajectories_post_hoc_ensemble.csv",
-    "trajectories_mlplan.csv",
-]
 
 
 def build_normalization_ranges(results_df: pd.DataFrame) -> pd.DataFrame:
@@ -220,98 +208,25 @@ def apply_normalization(df: pd.DataFrame, ranges_df: pd.DataFrame) -> pd.DataFra
     return merged.drop(columns=range_cols)
 
 
-def normalize_combined_trajectories(
-    data_dir: Path,
-    results_file: str = "preprocessed_results.csv",
-    file_names: Optional[List[str]] = None,
+def build_anchor_ranges(
+    results_path: Path,
+    supplementary_paths: List[Path],
     verbose: bool = True,
-) -> None:
-    """Normalize all combined trajectory files using all observed raw model scores.
+) -> pd.DataFrame:
+    """Build normalization ranges from all evaluated configurations in *results_path*.
 
-    Loads *results_file* (preprocessed_results.csv) to obtain normalization ranges
-    from all evaluated configurations across all experiments, then writes normalized
-    columns into each combined trajectory file in-place.
-
-    Args:
-        data_dir: Directory containing the combined output CSV files.
-        results_file: Name of the combined preprocessed results file inside data_dir.
-        file_names: Trajectory file names to normalize.  Defaults to
-                    COMBINED_TRAJECTORY_FILES.
-        verbose: Whether to print progress information.
+    Supplementary results files (e.g. post-hoc ensemble raw scores) extend the
+    ranges so that derived scores from those sources also fall within [0, 1].
     """
-    if file_names is None:
-        file_names = COMBINED_TRAJECTORY_FILES
-
-    results_path = data_dir / results_file
-    if not results_path.exists():
-        raise FileNotFoundError(
-            f"[normalization] Preprocessed results file not found: {results_path}. "
-            "Run preprocessing before normalization."
+    ranges_df = build_normalization_ranges_from_csv(results_path, verbose=verbose)
+    for path in supplementary_paths:
+        ranges_df = _combine_partial_ranges(
+            ranges_df,
+            build_normalization_ranges_from_csv(path, verbose=False),
         )
-
-    ranges_df = build_normalization_ranges_from_csv(
-        results_path=results_path,
-        chunk_size=200_000,
-        verbose=verbose,
-    )
-
-    # Extend anchor ranges with any supplementary results files (e.g. post-hoc
-    # ensemble raw scores) so that derived scores from those sources also fall
-    # within [0, 1] after normalization.  The combined ranges take the global
-    # min and max across all anchor sources per group.
-    supplementary_files = [
-        "preprocessed_results_post_hoc_ensemble.csv",
-        "preprocessed_results_post_hoc_surrogate.csv",
-    ]
-    for sup_name in supplementary_files:
-        sup_path = data_dir / sup_name
-        if not sup_path.exists():
-            continue
-        sup_ranges = build_normalization_ranges_from_csv(
-            results_path=sup_path,
-            chunk_size=200_000,
-            verbose=False,
+    if verbose:
+        print(
+            f"[normalization] Extended anchor with {len(supplementary_paths)} "
+            f"supplementary file(s): {len(ranges_df):,} groups"
         )
-        before = len(ranges_df)
-        ranges_df = _combine_partial_ranges(ranges_df, sup_ranges)
-        if verbose:
-            print(
-                f"[normalization] Extended anchor with {sup_name}: "
-                f"{before:,} → {len(ranges_df):,} groups"
-            )
-
-    _CHUNK_SIZE = 100_000
-
-    for file_name in file_names:
-        file_path = data_dir / file_name
-        if not file_path.exists():
-            if verbose:
-                print(f"[normalization] Skipping missing file: {file_name}")
-            continue
-
-        # Write normalized output to a temp file in the same directory, then
-        # atomically replace the original so a partial write never corrupts it.
-        tmp_fd, tmp_path = tempfile.mkstemp(dir=data_dir, suffix=".tmp")
-        os.close(tmp_fd)
-        try:
-            total_rows = 0
-            first_chunk = True
-            with pd.read_csv(file_path, chunksize=_CHUNK_SIZE, low_memory=False) as reader:
-                for chunk in reader:
-                    chunk = apply_normalization(chunk, ranges_df)
-                    chunk.to_csv(
-                        tmp_path,
-                        mode="w" if first_chunk else "a",
-                        header=first_chunk,
-                        index=False,
-                    )
-                    total_rows += len(chunk)
-                    first_chunk = False
-            os.replace(tmp_path, file_path)
-        except Exception:
-            if os.path.exists(tmp_path):
-                os.remove(tmp_path)
-            raise
-
-        if verbose:
-            print(f"[normalization] Normalized: {file_name} ({total_rows:,} rows)")
+    return ranges_df

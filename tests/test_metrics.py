@@ -8,17 +8,15 @@ This matches how Evaluator.evaluate() works (it always passes predict_proba outp
 Stored predictions in fold.preds are 1D (positive class for binary) via series_to_numpy(),
 but Metric.score() always operates on 2D input.
 """
-from pathlib import Path
-
 import numpy as np
 import pytest
 from pytest import approx
 from sklearn.metrics import accuracy_score, roc_auc_score, f1_score
+from pathlib import Path
 
 from src.metrics.metric import Metric
 
-
-DATASETS_DIR = Path(__file__).parent.parent / "src" / "datasets" / "datasets"
+DATASETS_DIR = Path(__file__).resolve().parents[1] / "src" / "datasets" / "datasets"
 
 
 def binary_proba(y_true_labels, y_pred_pos_proba):

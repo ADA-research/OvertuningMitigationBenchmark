@@ -7,6 +7,11 @@ import warnings
 warnings.filterwarnings("ignore", category=UserWarning, module="sklearn")
 
 
+# Combined outputs written by preprocessing and read by plotting.
+RESULTS_FILE = "preprocessed_results.csv.gz"
+TRAJECTORIES_FILE = "trajectories.csv.gz"
+
+
 DATASET_INSTANCE_COUNTS: dict[str, int] = {
     "363698": 907,
     "363613": 32769,

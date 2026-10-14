@@ -2,6 +2,7 @@ import argparse
 from datetime import datetime
 from pathlib import Path
 import re
+from typing import Callable
 
 import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
@@ -15,6 +16,7 @@ from .plots.ranking_all_methods import plot_all_methods_average_rank_trajectory
 from .plots.pairwise_wilcoxon_matrix import plot_pairwise_wilcoxon_matrix
 from .plots.trajectories_all_methods import plot_all_methods_normalized_test_error_trajectory
 from .plots.trajectories_per_dataset import plot_benchmark_dataset_trajectory
+from .plots.latex_summary_table import generate_latex_summary_table
 from .filters import apply_subset_filters, final_rows_per_run, normalize_dataset_id_value
 from .io import load_trajectory_source, load_trajectory_sources
 from .methods import (
@@ -34,6 +36,7 @@ from .methods import (
     one_se_mask,
     post_hoc_ensemble_mask,
     post_hoc_surrogate_mask,
+    post_hoc_surrogate_reshuffling_mask,
     selection_set_mask,
 )
 
@@ -253,16 +256,36 @@ def main() -> None:
             fontweight="normal",
         )
 
-    dataset_info_path = args.data_dir / "datasets.csv"
-    dataset_info = pd.read_csv(dataset_info_path) if dataset_info_path.exists() else pd.DataFrame()
+    dataset_info_candidates = [
+        args.data_dir / "datasets.csv",
+        Path("src/visualizations/data/datasets.csv"),
+    ]
+    dataset_info = pd.DataFrame()
+    dataset_info_path: Path | None = None
+    for candidate_path in dataset_info_candidates:
+        if candidate_path.exists():
+            dataset_info = pd.read_csv(candidate_path)
+            dataset_info_path = candidate_path
+            break
+    if dataset_info_path is None:
+        print(
+            "[plotting] Dataset metadata not found at any known path "
+            f"({', '.join(str(path) for path in dataset_info_candidates)}). "
+            "Only all_datasets group will be generated."
+        )
+    else:
+        print(f"[plotting] Using dataset metadata: {dataset_info_path}")
     source_map = load_trajectory_sources(
         args.data_dir,
         sources=["default", "one_se", "post_hoc_surrogate", "post_hoc_ensemble", "makarova", "mlplan"],
         usecols=PLOTTING_USECOLS,
     )
 
+    n_sources = len(source_map)
     incumbent_frames: list[pd.DataFrame] = []
-    for incumbent_source_name, incumbent_df in source_map.items():
+    for incumbent_source_name in list(source_map):
+        # Pop so each raw source frame is freed once its filtered copy exists.
+        incumbent_df = source_map.pop(incumbent_source_name)
         filtered_df = apply_subset_filters(
             incumbent_df,
             dataset_ids=args.dataset_id,
@@ -280,16 +303,11 @@ def main() -> None:
     if not incumbent_frames:
         raise ValueError("No rows available after loading and filtering trajectory sources")
     incumbent_subset = pd.concat(incumbent_frames, ignore_index=True)
-    print(f"[plotting] Loaded {len(incumbent_subset)} trajectory rows from {len(source_map)} sources")
+    del incumbent_frames
+    print(f"[plotting] Loaded {len(incumbent_subset)} trajectory rows from {n_sources} sources")
     print(f"[plotting] Output directory: {output_dir}")
 
     final_incumbent_rows = final_rows_per_run(incumbent_subset)
-
-    benchmark_target_name_overrides: dict[str, str] = {
-        "363631": "diamonds",
-        "363682": "Is-this-a-good-customer",
-        "363693": "physiochemical_protein",
-    }
 
     dataset_name_map: dict[str, str] = {}
     if not dataset_info.empty and {"Dataset ID", "Name"}.issubset(dataset_info.columns):
@@ -299,7 +317,27 @@ def main() -> None:
             for dataset_id, name in zip(dataset_name_series, dataset_info["Name"])
             if dataset_id
         }
-    dataset_name_map.update(benchmark_target_name_overrides)
+
+    # Fallback: parse dataset names from docs/datasets.md markdown table
+    if not dataset_name_map:
+        datasets_md_candidates = [
+            args.data_dir / "datasets.md",
+            Path("docs/datasets.md"),
+        ]
+        for md_path in datasets_md_candidates:
+            if md_path.exists():
+                with open(md_path) as fh:
+                    for line in fh:
+                        parts = [cell.strip() for cell in line.split("|")]
+                        if len(parts) >= 5:
+                            raw_id = parts[2].strip()
+                            raw_name = parts[3].strip()
+                            norm_id = normalize_dataset_id_value(raw_id)
+                            if norm_id and raw_name and not raw_id.startswith("-"):
+                                dataset_name_map[norm_id] = raw_name
+                if dataset_name_map:
+                    print(f"[plotting] Loaded {len(dataset_name_map)} dataset names from {md_path}")
+                    break
 
     def _dataset_sort_key(dataset_id: str) -> tuple[int, str]:
         value = str(dataset_id)
@@ -322,15 +360,17 @@ def main() -> None:
     def _summary_method_specs(df: pd.DataFrame) -> list[tuple[str, pd.Series, str, str]]:
         return [
             ("Baseline (CV)", combined_benchmark_mask(df, "cv"), "ensembled_test_loss", "ensemble_overtuning"),
-            ("Baseline (holdout)", combined_benchmark_mask(df, "holdout"), "retrain_test_loss", "retrain_overtuning"),
+            ("Baseline (H)", combined_benchmark_mask(df, "holdout"), "retrain_test_loss", "retrain_overtuning"),
             ("Selection set (CV)", selection_set_mask(df, "cv"), "ensembled_test_loss", "ensemble_overtuning"),
-            ("Selection set (holdout)", selection_set_mask(df, "holdout"), "retrain_test_loss", "retrain_overtuning"),
+            ("Selection set (H)", selection_set_mask(df, "holdout"), "retrain_test_loss", "retrain_overtuning"),
             ("1SE rule", one_se_mask(df, "cv"), "ensembled_test_loss", "ensemble_overtuning"),
             ("Surrogate mean (CV)", post_hoc_surrogate_mask(df, "cv"), "ensembled_test_loss", "ensemble_overtuning"),
-            ("Surrogate mean (holdout)", post_hoc_surrogate_mask(df, "holdout"), "retrain_test_loss", "retrain_overtuning"),
+            ("Surrogate mean + reshuffling (CV)", post_hoc_surrogate_reshuffling_mask(df, "cv"), "ensembled_test_loss", "ensemble_overtuning"),
+            ("Surrogate mean (H)", post_hoc_surrogate_mask(df, "holdout"), "retrain_test_loss", "retrain_overtuning"),
+            ("Surrogate mean + reshuffling (H)", post_hoc_surrogate_reshuffling_mask(df, "holdout"), "retrain_test_loss", "retrain_overtuning"),
             ("Post-hoc ensembling (CV)", post_hoc_ensemble_mask(df, "cv"), "ensembled_test_loss", "ensemble_overtuning"),
             (
-                "Post-hoc ensembling (holdout)",
+                "Post-hoc ensembling (H)",
                 post_hoc_ensemble_mask(df, "holdout"),
                 "retrain_test_loss",
                 "retrain_overtuning",
@@ -339,7 +379,7 @@ def main() -> None:
             (MLPLAN_LABEL, mlplan_mask(df), "ensembled_test_loss", "ensemble_overtuning"),
             ("Reshuffling (CV)", combined_reshuffling_mask(df, "cv"), "ensembled_test_loss", "ensemble_overtuning"),
             (
-                "Reshuffling (holdout)",
+                "Reshuffling (H)",
                 combined_reshuffling_mask(df, "holdout"),
                 "retrain_test_loss",
                 "retrain_overtuning",
@@ -404,6 +444,9 @@ def main() -> None:
         "FastAIMLP": "fastaimlp",
         "LGBM": "lgbm",
         "RealMLP": "realmlp",
+    }
+    _MODEL_DISPLAY_NAMES = {
+        "LGBM": "LightGBM",
     }
 
     for model_name, file_prefix in model_file_prefix.items():
@@ -478,7 +521,7 @@ def main() -> None:
         plt.close(fig_cdf)
         print(f"  [✓] relative_overtuning_cdf_cv_holdout.pdf")
 
-        fig_scatter, scatter_axes = plt.subplots(1, 2, figsize=(14, 5.3))
+        fig_scatter, scatter_axes = plt.subplots(1, 2, figsize=(14, 4.77))
         for i, budget in enumerate(["cv", "holdout"]):
             ot_col, tl_col = normalized_scatter_cols(budget)
             _, scatter_stats = plot_relative_overtuning_delta_scatter(
@@ -618,12 +661,13 @@ def main() -> None:
 
     def generate_cv_retrain_single_plots(suite_df: pd.DataFrame, suite_output_dir: Path) -> None:
         suite_output_dir.mkdir(parents=True, exist_ok=True)
-        cdf_df = suite_df.copy()
+        # Shallow copy: only inner_split is replaced, other columns are shared and read-only.
+        cdf_df = suite_df.copy(deep=False)
         if "inner_split" in cdf_df.columns:
             cdf_df["inner_split"] = cdf_df["inner_split"].astype("string").fillna("").astype(str)
         suite_final_for_scatter = final_rows_per_run(suite_df)
 
-        fig_cdf_single, ax_cdf_single = plt.subplots(figsize=(8, 6.7))
+        fig_cdf_single, ax_cdf_single = plt.subplots(figsize=(8, 6.03))
         fig_cdf, _ = plot_relative_overtuning_cdf_mitigations(
             cdf_df,
             budget="cv",
@@ -1236,25 +1280,33 @@ def main() -> None:
     if args.partial:
         all_datasets_suite_dir = grouped_root / "all_datasets"
         generate_group_suite(incumbent_subset, all_datasets_suite_dir, skip_pairwise=True)
+        generate_latex_summary_table(incumbent_subset, dataset_name_map, all_datasets_suite_dir)
         print(f"[plotting] Generated partial grouped suite (no statistical testing or appendix plots)")
         print(f"[plotting] Output directory: {output_dir}")
         return
 
-    group_specs: list[tuple[str, pd.DataFrame]] = [("all_datasets", incumbent_subset)]
-    appendix_plot_groups: list[tuple[str, pd.DataFrame, list[str]]] = [("all_datasets", incumbent_subset, ["FastAIMLP", "LightGBM"])]
-    appendix_optimizer_plot_groups: list[tuple[str, pd.DataFrame]] = [("all_datasets", incumbent_subset)]
+    # Groups hold a function that builds the frame on use, so only one group copy is in memory at a time.
+    def full_subset() -> pd.DataFrame:
+        return incumbent_subset
+
+    def subset_of(mask: pd.Series) -> Callable[[], pd.DataFrame]:
+        return lambda: incumbent_subset.loc[mask].copy()
+
+    group_specs: list[tuple[str, Callable[[], pd.DataFrame]]] = [("all_datasets", full_subset)]
+    appendix_plot_groups: list[tuple[str, Callable[[], pd.DataFrame], list[str]]] = [("all_datasets", full_subset, ["FastAIMLP", "LightGBM"])]
+    appendix_optimizer_plot_groups: list[tuple[str, Callable[[], pd.DataFrame]]] = [("all_datasets", full_subset)]
     _MODEL_ALIASES: dict[str, set[str]] = {
         "FastAIMLP": {"FastAIMLP"},
         "LightGBM": {"LightGBM", "LGBM"},
         "RealMLP": {"RealMLP"},
     }
-    appendix_cdf_model_groups: list[tuple[str, pd.DataFrame, list[tuple[str, set[str], str]]]] = [
-        ("all_datasets", incumbent_subset, [
+    appendix_cdf_model_groups: list[tuple[str, Callable[[], pd.DataFrame], list[tuple[str, set[str], str]]]] = [
+        ("all_datasets", full_subset, [
             ("FastAIMLP", _MODEL_ALIASES["FastAIMLP"], "FastAIMLP"),
             ("LightGBM", _MODEL_ALIASES["LightGBM"], "LightGBM"),
         ]),
     ]
-    appendix_cdf_optimizer_groups: list[tuple[str, pd.DataFrame]] = [("all_datasets", incumbent_subset)]
+    appendix_cdf_optimizer_groups: list[tuple[str, Callable[[], pd.DataFrame]]] = [("all_datasets", full_subset)]
     if not dataset_info.empty and {"Dataset ID", "# Instances", "Type"}.issubset(dataset_info.columns) and "dataset_id" in incumbent_subset.columns:
         binary_metadata = dataset_info.copy()
         binary_metadata["type_norm"] = binary_metadata["Type"].fillna("").astype(str).str.strip().str.lower()
@@ -1272,29 +1324,31 @@ def main() -> None:
             ]
         )
 
-        all_small_datasets_df = incumbent_subset.loc[incumbent_dataset_norm.isin(small_dataset_ids)].copy()
-        all_large_datasets_df = incumbent_subset.loc[incumbent_dataset_norm.isin(large_dataset_ids)].copy()
-        all_small_binary_df = incumbent_subset.loc[incumbent_dataset_norm.isin(binary_small_ids)].copy()
+        all_small_datasets_mask = incumbent_dataset_norm.isin(small_dataset_ids)
+        all_large_datasets_mask = incumbent_dataset_norm.isin(large_dataset_ids)
+        all_small_binary_mask = incumbent_dataset_norm.isin(binary_small_ids)
+        del incumbent_dataset_norm
+        all_small_datasets_df = subset_of(all_small_datasets_mask)
 
         group_specs.append(("all_small_datasets", all_small_datasets_df))
-        group_specs.append(("all_large_datasets", all_large_datasets_df))
-        group_specs.append(("all_small_binary", incumbent_subset.loc[incumbent_dataset_norm.isin(binary_small_ids)].copy()))
+        group_specs.append(("all_large_datasets", subset_of(all_large_datasets_mask)))
+        group_specs.append(("all_small_binary", subset_of(all_small_binary_mask)))
 
         appendix_plot_groups.append(("all_small_datasets", all_small_datasets_df, ["FastAIMLP", "LightGBM", "RealMLP"]))
         appendix_optimizer_plot_groups.append(("all_small_datasets", all_small_datasets_df))
         appendix_cdf_model_groups.append(("all_small_datasets", all_small_datasets_df, [
             ("FastAIMLP", _MODEL_ALIASES["FastAIMLP"], "FastAIMLP"),
             ("LightGBM", _MODEL_ALIASES["LightGBM"], "LightGBM"),
-            ("RealMLP\n(small datasets only)", _MODEL_ALIASES["RealMLP"], "RealMLP"),
+            ("RealMLP", _MODEL_ALIASES["RealMLP"], "RealMLP"),
         ]))
         appendix_cdf_optimizer_groups.append(("all_small_datasets", all_small_datasets_df))
     else:
         print("[plotting] Missing dataset metadata. Only all_datasets group will be generated.")
 
     if args.only_cv_retrain_plots:
-        group_lookup = {group_name: group_df for group_name, group_df in group_specs}
+        group_lookup = {group_name: get_group_df for group_name, get_group_df in group_specs}
         for group_name in ["all_datasets", "all_small_binary"]:
-            group_df = group_lookup.get(group_name)
+            group_df = group_lookup[group_name]() if group_name in group_lookup else None
             if group_df is None or group_df.empty:
                 print(f"[plotting] Skip {group_name}: no rows available")
                 continue
@@ -1304,12 +1358,12 @@ def main() -> None:
         return
 
     if args.only_model_score_cd:
-        group_lookup = {group_name: group_df for group_name, group_df in group_specs}
+        group_lookup = {group_name: get_group_df for group_name, get_group_df in group_specs}
         for group_name, include_realmlp in [
             ("all_datasets", False),
             ("all_small_datasets", True),
         ]:
-            group_df = group_lookup.get(group_name)
+            group_df = group_lookup[group_name]() if group_name in group_lookup else None
             if group_df is None or group_df.empty:
                 print(f"[plotting] Skip {group_name}: no rows available")
                 continue
@@ -1328,10 +1382,10 @@ def main() -> None:
         for pattern in ["overview_*.pdf", "appendix_normalized_delta_scatter_*.pdf"]:
             for existing_plot in appendix_dir.glob(pattern):
                 existing_plot.unlink()
-        for suite_name, suite_df, model_labels in appendix_plot_groups:
+        for suite_name, get_suite_df, model_labels in appendix_plot_groups:
             generate_appendix_combined_delta_scatter(
                 suite_name,
-                suite_df,
+                get_suite_df(),
                 appendix_dir,
                 model_labels,
             )
@@ -1344,10 +1398,10 @@ def main() -> None:
         for pattern in ["appendix_normalized_delta_scatter_by_optimizer_*.pdf"]:
             for existing_plot in optimizer_appendix_dir.glob(pattern):
                 existing_plot.unlink()
-        for suite_name, suite_df in appendix_optimizer_plot_groups:
+        for suite_name, get_suite_df in appendix_optimizer_plot_groups:
             generate_appendix_optimizer_delta_scatter(
                 suite_name,
-                suite_df,
+                get_suite_df(),
                 optimizer_appendix_dir,
             )
         print(f"[plotting] Output directory: {output_dir}")
@@ -1359,140 +1413,179 @@ def main() -> None:
         for pattern in ["appendix_cdf_*.pdf"]:
             for existing_plot in cdf_appendix_dir.glob(pattern):
                 existing_plot.unlink()
-        for suite_name, suite_df, model_specs in appendix_cdf_model_groups:
-            generate_appendix_cdf_by_model(suite_name, suite_df, cdf_appendix_dir, model_specs)
-        for suite_name, suite_df in appendix_cdf_optimizer_groups:
-            generate_appendix_cdf_by_optimizer(suite_name, suite_df, cdf_appendix_dir)
+        for suite_name, get_suite_df, model_specs in appendix_cdf_model_groups:
+            generate_appendix_cdf_by_model(suite_name, get_suite_df(), cdf_appendix_dir, model_specs)
+        for suite_name, get_suite_df in appendix_cdf_optimizer_groups:
+            generate_appendix_cdf_by_optimizer(suite_name, get_suite_df(), cdf_appendix_dir)
         print(f"[plotting] Output directory: {output_dir}")
         return
 
-    if args.only_benchmark_aggregate_selected:
-        def _generate_benchmark_aggregate_selected():
-            benchmark_targets: list[tuple[str, str, str]] = [
-                ("363631", "LightGBM", "holdout"),
-                ("363693", "LightGBM", "holdout"),
-                ("363682", "LightGBM", "holdout"),
-            ]
+    def _generate_benchmark_aggregate_plots() -> None:
+        benchmark_target_dir = output_dir / "benchmark_aggregate_selected"
+        benchmark_target_dir.mkdir(parents=True, exist_ok=True)
+        for existing_plot in benchmark_target_dir.glob("benchmark_trajectory_*.pdf"):
+            existing_plot.unlink()
 
-            model_aliases: dict[str, set[str]] = {
-                "LightGBM": {"LightGBM", "LGBM"},
-                "LGBM": {"LightGBM", "LGBM"},
-            }
+        benchmark_df = load_trajectory_source(
+            args.data_dir,
+            source="default",
+            usecols=[
+                "experiment_id",
+                "dataset_id",
+                "optimizer",
+                "inner_split",
+                "mitigation",
+                "selection_set_size",
+                "reshuffling",
+                "repetition",
+                "outer_fold",
+                "model",
+                "iteration",
+                "val_performance",
+                "retrain_test_loss",
+                "ensembled_test_loss",
+            ],
+        )
+        benchmark_df = benchmark_df.copy()
+        benchmark_df["dataset_id_norm"] = benchmark_df["dataset_id"].map(normalize_dataset_id_value)
+        benchmark_df["inner_split_norm"] = benchmark_df["inner_split"].astype("object").where(
+            pd.notna(benchmark_df["inner_split"]), ""
+        ).astype(str).str.strip().str.lower()
+        benchmark_df["model_name"] = benchmark_df["model"].astype("object").where(
+            pd.notna(benchmark_df["model"]), ""
+        ).astype(str).str.strip().replace("LGBM", "LightGBM")
 
-            benchmark_target_dir = output_dir / "benchmark_aggregate_selected"
-            benchmark_target_dir.mkdir(parents=True, exist_ok=True)
-            benchmark_df = load_trajectory_source(
-                args.data_dir,
-                source="default",
-                usecols=[
-                    "experiment_id",
-                    "dataset_id",
-                    "optimizer",
-                    "inner_split",
-                    "mitigation",
-                    "selection_set_size",
-                    "reshuffling",
-                    "repetition",
-                    "outer_fold",
-                    "model",
-                    "iteration",
-                    "val_performance",
-                    "retrain_test_loss",
-                    "ensembled_test_loss",
-                ],
+        mitigation_series = benchmark_df["mitigation"].astype("object").where(
+            pd.notna(benchmark_df["mitigation"]), ""
+        ).astype(str).str.strip().str.lower()
+        reshuffling_series = benchmark_df["reshuffling"].astype("object").where(
+            pd.notna(benchmark_df["reshuffling"]), ""
+        ).astype(str).str.strip().str.lower()
+        selection_series = pd.to_numeric(benchmark_df["selection_set_size"], errors="coerce")
+
+        benchmark_mask = (
+            mitigation_series.isin(["", "none"])
+            & reshuffling_series.eq("false")
+            & (selection_series.isna() | selection_series.eq(0.0))
+            & benchmark_df["inner_split_norm"].isin(["cv", "holdout"])
+            & benchmark_df["dataset_id_norm"].ne("")
+            & benchmark_df["model_name"].ne("")
+        )
+
+        targets_df = benchmark_df.loc[
+            benchmark_mask,
+            ["dataset_id_norm", "model_name", "inner_split_norm"],
+        ].drop_duplicates().reset_index(drop=True)
+
+        if targets_df.empty:
+            print("[plotting] No benchmark aggregate targets found in default trajectories")
+            return
+
+        targets_df = targets_df.sort_values(
+            by=["dataset_id_norm", "model_name", "inner_split_norm"],
+            key=lambda series: series.map(str.lower) if series.name != "dataset_id_norm" else series.map(
+                lambda value: _dataset_sort_key(str(value))[1]
+            ),
+        )
+
+        def _filename_slug(value: str) -> str:
+            slug = re.sub(r"[^A-Za-z0-9]+", "_", str(value)).strip("_")
+            return slug or "dataset"
+
+        generated_benchmark_targets = 0
+        total_targets = int(len(targets_df))
+
+        for _, target in targets_df.iterrows():
+            dataset_id = str(target["dataset_id_norm"])
+            model_name = str(target["model_name"])
+            budget = str(target["inner_split_norm"])
+
+            target_mask = (
+                benchmark_df["dataset_id_norm"].eq(dataset_id)
+                & benchmark_df["model_name"].eq(model_name)
+                & benchmark_df["inner_split_norm"].eq(budget)
             )
-            benchmark_df = benchmark_df.copy()
-            benchmark_df["dataset_id_norm"] = benchmark_df["dataset_id"].map(normalize_dataset_id_value)
+            subset = benchmark_df.loc[target_mask].copy()
+            if subset.empty:
+                print(f"[plotting] Skip benchmark aggregate target {dataset_id}/{model_name}/{budget}: no matching rows")
+                continue
 
-            benchmark_target_name_overrides: dict[str, str] = {
-                "363631": "diamonds",
-                "363682": "Is-this-a-good-customer",
-                "363693": "physiochemical_protein",
-            }
-
-            local_dataset_name_map: dict[str, str] = {}
-            if not dataset_info.empty and {"Dataset ID", "Name"}.issubset(dataset_info.columns):
-                dataset_name_series = dataset_info["Dataset ID"].map(normalize_dataset_id_value)
-                local_dataset_name_map = {
-                    dataset_id: str(name)
-                    for dataset_id, name in zip(dataset_name_series, dataset_info["Name"])
-                    if dataset_id
-                }
-            local_dataset_name_map.update(benchmark_target_name_overrides)
-
-            def _filename_slug(value: str) -> str:
-                slug = re.sub(r"[^A-Za-z0-9]+", "_", str(value)).strip("_")
-                return slug or "dataset"
-
-            generated_benchmark_targets = 0
-            for dataset_id, model_name, budget in benchmark_targets:
-                allowed_model_names = model_aliases.get(model_name, {model_name})
-                target_mask = (
-                    benchmark_df["dataset_id_norm"].eq(dataset_id)
-                    & benchmark_df["model"].astype(str).isin(allowed_model_names)
-                    & benchmark_df["inner_split"].astype(str).str.strip().str.lower().eq(budget)
+            dataset_label = dataset_name_map.get(dataset_id, "").strip()
+            if not dataset_label:
+                print(
+                    f"[plotting] Skip benchmark aggregate target {dataset_id}/{model_name}/{budget}: "
+                    "missing dataset name in metadata"
                 )
-                subset = benchmark_df.loc[target_mask].copy()
-                if subset.empty:
-                    print(f"[plotting] Skip benchmark aggregate target {dataset_id}/{model_name}/{budget}: no matching rows")
-                    continue
+                continue
+            dataset_slug = _filename_slug(dataset_label)
+            model_slug = _filename_slug(model_name)
 
-                dataset_label = local_dataset_name_map.get(dataset_id, dataset_id)
-                dataset_slug = _filename_slug(dataset_label)
-
+            if budget == "holdout":
                 fig_benchmark_retrain, benchmark_stats_retrain = plot_benchmark_dataset_trajectory(
                     subset,
                     dataset_label=dataset_label,
+                    model_label=model_name,
                     budget=budget,
                     test_col="retrain_test_loss",
                 )
-                retrain_pdf = benchmark_target_dir / f"benchmark_trajectory_{dataset_slug}_{model_name}_{budget}_retrain.pdf"
+                retrain_pdf = benchmark_target_dir / f"benchmark_trajectory_{dataset_slug}_{model_slug}_{budget}_retrain.pdf"
                 fig_benchmark_retrain.savefig(retrain_pdf, bbox_inches="tight", dpi=200)
                 plt.close(fig_benchmark_retrain)
 
-                fig_benchmark_ensemble, benchmark_stats_ensemble = plot_benchmark_dataset_trajectory(
-                    subset,
-                    dataset_label=dataset_label,
-                    budget=budget,
-                    test_col="ensembled_test_loss",
-                )
-                ensemble_pdf = benchmark_target_dir / f"benchmark_trajectory_{dataset_slug}_{model_name}_{budget}_ensemble.pdf"
-                fig_benchmark_ensemble.savefig(ensemble_pdf, bbox_inches="tight", dpi=200)
-                plt.close(fig_benchmark_ensemble)
-
-                generated_benchmark_targets += 1
                 print(
                     f"[plotting] [✓] {retrain_pdf.name} "
                     f"(dataset={dataset_label}, dataset_id={dataset_id}, model={model_name}, budget={budget}, runs={benchmark_stats_retrain.runs}, points={benchmark_stats_retrain.points})"
                 )
+            elif budget == "cv":
+                fig_benchmark_ensemble, benchmark_stats_ensemble = plot_benchmark_dataset_trajectory(
+                    subset,
+                    dataset_label=dataset_label,
+                    model_label=model_name,
+                    budget=budget,
+                    test_col="ensembled_test_loss",
+                )
+                ensemble_pdf = benchmark_target_dir / f"benchmark_trajectory_{dataset_slug}_{model_slug}_{budget}_ensemble.pdf"
+                fig_benchmark_ensemble.savefig(ensemble_pdf, bbox_inches="tight", dpi=200)
+                plt.close(fig_benchmark_ensemble)
+
                 print(
                     f"[plotting] [✓] {ensemble_pdf.name} "
                     f"(dataset={dataset_label}, dataset_id={dataset_id}, model={model_name}, budget={budget}, runs={benchmark_stats_ensemble.runs}, points={benchmark_stats_ensemble.points})"
                 )
+            else:
+                print(
+                    f"[plotting] Skip benchmark aggregate target {dataset_id}/{model_name}/{budget}: unsupported budget"
+                )
+                continue
 
-            print(
-                f"[plotting] Generated {generated_benchmark_targets}/{len(benchmark_targets)} "
-                f"targeted benchmark aggregate trajectories"
-            )
-        
-        _generate_benchmark_aggregate_selected()
+            generated_benchmark_targets += 1
+
+        print(
+            f"[plotting] Generated {generated_benchmark_targets}/{total_targets} "
+            "benchmark aggregate trajectories"
+        )
+
+    if args.only_benchmark_aggregate_selected:
+        _generate_benchmark_aggregate_plots()
         print(f"[plotting] Output directory: {output_dir}")
         return
 
-    for group_name, group_df in group_specs:
-        generate_group_suite(group_df, grouped_root / group_name)
+    for group_name, get_group_df in group_specs:
+        generate_group_suite(get_group_df(), grouped_root / group_name)
 
     print(f"[plotting] Generated {len(group_specs)} grouped suites")
+
+    generate_latex_summary_table(incumbent_subset, dataset_name_map, grouped_root / "all_datasets")
 
     appendix_dir = grouped_root / "appendix_overview"
     appendix_dir.mkdir(parents=True, exist_ok=True)
     for pattern in ["overview_*.pdf", "appendix_normalized_delta_scatter_*.pdf"]:
         for existing_plot in appendix_dir.glob(pattern):
             existing_plot.unlink()
-    for suite_name, suite_df, model_labels in appendix_plot_groups:
+    for suite_name, get_suite_df, model_labels in appendix_plot_groups:
         generate_appendix_combined_delta_scatter(
             suite_name,
-            suite_df,
+            get_suite_df(),
             appendix_dir,
             model_labels,
         )
@@ -1502,10 +1595,10 @@ def main() -> None:
     for pattern in ["appendix_normalized_delta_scatter_by_optimizer_*.pdf"]:
         for existing_plot in optimizer_appendix_dir.glob(pattern):
             existing_plot.unlink()
-    for suite_name, suite_df in appendix_optimizer_plot_groups:
+    for suite_name, get_suite_df in appendix_optimizer_plot_groups:
         generate_appendix_optimizer_delta_scatter(
             suite_name,
-            suite_df,
+            get_suite_df(),
             optimizer_appendix_dir,
         )
 
@@ -1514,111 +1607,12 @@ def main() -> None:
     for pattern in ["appendix_cdf_*.pdf"]:
         for existing_plot in cdf_appendix_dir.glob(pattern):
             existing_plot.unlink()
-    for suite_name, suite_df, model_specs in appendix_cdf_model_groups:
-        generate_appendix_cdf_by_model(suite_name, suite_df, cdf_appendix_dir, model_specs)
-    for suite_name, suite_df in appendix_cdf_optimizer_groups:
-        generate_appendix_cdf_by_optimizer(suite_name, suite_df, cdf_appendix_dir)
+    for suite_name, get_suite_df, model_specs in appendix_cdf_model_groups:
+        generate_appendix_cdf_by_model(suite_name, get_suite_df(), cdf_appendix_dir, model_specs)
+    for suite_name, get_suite_df in appendix_cdf_optimizer_groups:
+        generate_appendix_cdf_by_optimizer(suite_name, get_suite_df(), cdf_appendix_dir)
 
-    benchmark_targets: list[tuple[str, str, str]] = [
-        ("363631", "LightGBM", "holdout"),
-        ("363693", "LightGBM", "holdout"),
-        ("363682", "LightGBM", "holdout"),
-    ]
-
-    model_aliases: dict[str, set[str]] = {
-        "LightGBM": {"LightGBM", "LGBM"},
-        "LGBM": {"LightGBM", "LGBM"},
-    }
-
-    benchmark_target_dir = output_dir / "benchmark_aggregate_selected"
-    benchmark_target_dir.mkdir(parents=True, exist_ok=True)
-    benchmark_df = load_trajectory_source(
-        args.data_dir,
-        source="default",
-        usecols=[
-            "experiment_id",
-            "dataset_id",
-            "optimizer",
-            "inner_split",
-            "mitigation",
-            "selection_set_size",
-            "reshuffling",
-            "repetition",
-            "outer_fold",
-            "model",
-            "iteration",
-            "val_performance",
-            "retrain_test_loss",
-            "ensembled_test_loss",
-        ],
-    )
-    benchmark_df = benchmark_df.copy()
-    benchmark_df["dataset_id_norm"] = benchmark_df["dataset_id"].map(normalize_dataset_id_value)
-
-    dataset_name_map: dict[str, str] = {}
-    if not dataset_info.empty and {"Dataset ID", "Name"}.issubset(dataset_info.columns):
-        dataset_name_series = dataset_info["Dataset ID"].map(normalize_dataset_id_value)
-        dataset_name_map = {
-            dataset_id: str(name)
-            for dataset_id, name in zip(dataset_name_series, dataset_info["Name"])
-            if dataset_id
-        }
-    dataset_name_map.update(benchmark_target_name_overrides)
-
-    def _filename_slug(value: str) -> str:
-        slug = re.sub(r"[^A-Za-z0-9]+", "_", str(value)).strip("_")
-        return slug or "dataset"
-
-    generated_benchmark_targets = 0
-    for dataset_id, model_name, budget in benchmark_targets:
-        allowed_model_names = model_aliases.get(model_name, {model_name})
-        target_mask = (
-            benchmark_df["dataset_id_norm"].eq(dataset_id)
-            & benchmark_df["model"].astype(str).isin(allowed_model_names)
-            & benchmark_df["inner_split"].astype(str).str.strip().str.lower().eq(budget)
-        )
-        subset = benchmark_df.loc[target_mask].copy()
-        if subset.empty:
-            print(f"[plotting] Skip benchmark aggregate target {dataset_id}/{model_name}/{budget}: no matching rows")
-            continue
-
-        dataset_label = dataset_name_map.get(dataset_id, dataset_id)
-        dataset_slug = _filename_slug(dataset_label)
-
-        fig_benchmark_retrain, benchmark_stats_retrain = plot_benchmark_dataset_trajectory(
-            subset,
-            dataset_label=dataset_label,
-            budget=budget,
-            test_col="retrain_test_loss",
-        )
-        retrain_pdf = benchmark_target_dir / f"benchmark_trajectory_{dataset_slug}_{model_name}_{budget}_retrain.pdf"
-        fig_benchmark_retrain.savefig(retrain_pdf, bbox_inches="tight", dpi=200)
-        plt.close(fig_benchmark_retrain)
-
-        fig_benchmark_ensemble, benchmark_stats_ensemble = plot_benchmark_dataset_trajectory(
-            subset,
-            dataset_label=dataset_label,
-            budget=budget,
-            test_col="ensembled_test_loss",
-        )
-        ensemble_pdf = benchmark_target_dir / f"benchmark_trajectory_{dataset_slug}_{model_name}_{budget}_ensemble.pdf"
-        fig_benchmark_ensemble.savefig(ensemble_pdf, bbox_inches="tight", dpi=200)
-        plt.close(fig_benchmark_ensemble)
-
-        generated_benchmark_targets += 1
-        print(
-            f"[plotting] [✓] {retrain_pdf.name} "
-            f"(dataset={dataset_label}, dataset_id={dataset_id}, model={model_name}, budget={budget}, runs={benchmark_stats_retrain.runs}, points={benchmark_stats_retrain.points})"
-        )
-        print(
-            f"[plotting] [✓] {ensemble_pdf.name} "
-            f"(dataset={dataset_label}, dataset_id={dataset_id}, model={model_name}, budget={budget}, runs={benchmark_stats_ensemble.runs}, points={benchmark_stats_ensemble.points})"
-        )
-
-    print(
-        f"[plotting] Generated {generated_benchmark_targets}/{len(benchmark_targets)} "
-        f"targeted benchmark aggregate trajectories"
-    )
+    _generate_benchmark_aggregate_plots()
 
     if not args.per_dataset:
         print("[plotting] Per-dataset outputs disabled (pass --per-dataset to enable)")

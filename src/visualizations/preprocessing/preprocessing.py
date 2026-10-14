@@ -1,21 +1,38 @@
 import os
+import gzip
+import io
+import time
 import yaml
 import warnings
 from pathlib import Path
-from contextlib import ExitStack
+from contextlib import ExitStack, contextmanager
 import numpy as np
 import pandas as pd
 from tqdm import tqdm
 
-from typing import List, Tuple
+from typing import Callable, List, TextIO
 from src.metrics.metric import Metric
 from src.visualizations.preprocessing.shared_utils import (
+    RESULTS_FILE,
+    TRAJECTORIES_FILE,
     coerce_predictions_for_metric,
     resolve_artifact_paths,
 )
 from src.visualizations.preprocessing.combine_normalization import (
-    normalize_combined_trajectories,
+    apply_normalization,
+    build_anchor_ranges,
 )
+
+
+# Keys are the `method` values in the combined trajectories file (plotting's trajectory_source).
+TRAJECTORY_FILES_BY_METHOD = {
+    "default": "trajectories.csv",
+    "one_se": "trajectories_one_se_selection.csv",
+    "makarova": "trajectories_makarova.csv",
+    "mlplan": "trajectories_mlplan.csv",
+    "post_hoc_ensemble": "trajectories_post_hoc_ensemble.csv",
+    "post_hoc_surrogate": "trajectories_post_hoc_surrogate.csv",
+}
 
 
 # sklearn can emit this for imperfect probability vectors in historical artifacts.
@@ -77,25 +94,24 @@ def _dataset_unique_run_counts_by_model(
         return {}, None
 
     runs_by_model_dataset: dict[str, dict[str, set[str]]] = {}
-    iterator = pd.read_csv(
-        csv_path,
+    with csv_path.open("rb") as source, pd.read_csv(
+        source,
+        compression="gzip" if csv_path.suffix == ".gz" else None,
         usecols=["model", "dataset_id", run_column],
         chunksize=chunk_size,
         low_memory=False,
-    )
-
-    for chunk in iterator:
-        chunk = chunk.dropna(subset=["model", "dataset_id", run_column])
-        if chunk.empty:
-            continue
-        for (model, dataset_id), runs in chunk.groupby(["model", "dataset_id"])[run_column]:
-            model_key = str(model)
-            dataset_key = str(dataset_id)
-            if model_key not in runs_by_model_dataset:
-                runs_by_model_dataset[model_key] = {}
-            if dataset_key not in runs_by_model_dataset[model_key]:
-                runs_by_model_dataset[model_key][dataset_key] = set()
-            runs_by_model_dataset[model_key][dataset_key].update(runs.astype(str).unique().tolist())
+    ) as reader:
+        for chunk in reader:
+            chunk = chunk.dropna(subset=["model", "dataset_id", run_column])
+            for (model, dataset_id), runs in chunk.groupby(["model", "dataset_id"])[run_column]:
+                model_key = str(model)
+                dataset_key = str(dataset_id)
+                if model_key not in runs_by_model_dataset:
+                    runs_by_model_dataset[model_key] = {}
+                if dataset_key not in runs_by_model_dataset[model_key]:
+                    runs_by_model_dataset[model_key][dataset_key] = set()
+                runs_by_model_dataset[model_key][dataset_key].update(runs.astype(str).unique().tolist())
+            _discard_file_cache(source)
 
     counts_by_model: dict[str, dict[str, int]] = {}
     for model_key in sorted(runs_by_model_dataset.keys()):
@@ -140,14 +156,7 @@ def _log_combined_trajectory_dataset_run_counts(output_dir: Path, verbose: bool)
     if not verbose:
         return
 
-    trajectory_files = [
-        output_dir / "trajectories.csv",
-        output_dir / "trajectories_surrogate_selection.csv",
-        output_dir / "trajectories_one_se_selection.csv",
-        output_dir / "trajectories_makarova.csv",
-        output_dir / "trajectories_post_hoc_ensemble.csv",
-        output_dir / "trajectories_post_hoc_surrogate.csv",
-    ]
+    trajectory_files = [output_dir / TRAJECTORIES_FILE]
 
     print("[preprocessing] Model-specific dataset -> unique run counts per combined trajectory file:")
     for csv_path in trajectory_files:
@@ -182,7 +191,7 @@ def _align_score_columns(df: pd.DataFrame, table_kind: str) -> pd.DataFrame:
             ("normalized_cv_ensembled_test_score", "normalized_ensembled_test_loss"),
         ]
     elif table_kind in {
-        "trajectories",
+        "default",
         "surrogate",
         "one_se",
         "makarova",
@@ -205,53 +214,99 @@ def _align_score_columns(df: pd.DataFrame, table_kind: str) -> pd.DataFrame:
     return out
 
 
+def _discard_file_cache(handle) -> None:
+    if hasattr(os, "posix_fadvise"):
+        os.posix_fadvise(handle.fileno(), 0, 0, os.POSIX_FADV_DONTNEED)
+
+
 def append_csv_file(
     source_path: Path,
-    target_path: Path,
+    handle: TextIO,
     wrote_header: bool,
     expected_columns: List[str] | None = None,
     table_kind: str = "",
-    chunk_size: int = 100_000,
+    chunk_size: int = 10_000,
+    transform: Callable[[pd.DataFrame], pd.DataFrame] | None = None,
+    progress: Callable[[int], None] | None = None,
 ) -> tuple[bool, List[str] | None]:
-    """Append a CSV file to another CSV with schema alignment by column name.
+    """Append a CSV file to an open output handle with schema alignment by column name.
 
     This prevents silent column corruption when per-experiment files have the
-    same columns in different order.
+    same columns in different order. *transform* is applied to every chunk
+    before the schema alignment.
     """
     if not source_path.exists():
         return wrote_header, expected_columns
 
-    for chunk in pd.read_csv(source_path, chunksize=chunk_size, low_memory=False):
-        chunk = _align_score_columns(chunk, table_kind=table_kind)
-
-        if expected_columns is None:
-            expected_columns = list(chunk.columns)
-        else:
-            missing = [c for c in expected_columns if c not in chunk.columns]
-            extra = [c for c in chunk.columns if c not in expected_columns]
-
-            # Fill missing columns explicitly and fail on unexpected extras to
-            # prevent silent schema drift in combined outputs.
-            for col in missing:
-                chunk[col] = np.nan
-
-            if extra:
-                raise ValueError(
-                    f"Schema mismatch while combining {source_path}. "
-                    f"Unexpected columns: {extra}. Expected columns: {expected_columns}"
-                )
-
-            chunk = chunk.reindex(columns=expected_columns)
-
-        chunk.to_csv(
-            target_path,
-            mode="a" if wrote_header else "w",
-            header=not wrote_header,
-            index=False,
-        )
-        wrote_header = True
+    with source_path.open("rb") as source, pd.read_csv(
+        source,
+        compression="gzip" if source_path.suffix == ".gz" else None,
+        chunksize=chunk_size,
+        low_memory=False,
+    ) as reader:
+        for chunk in reader:
+            wrote_header, expected_columns = _append_csv_chunk(
+                chunk, source_path, handle, wrote_header, expected_columns,
+                table_kind, transform,
+            )
+            if progress is not None:
+                progress(len(chunk))
+            _discard_file_cache(source)
 
     return wrote_header, expected_columns
+
+
+def _append_csv_chunk(
+    chunk, source_path, handle, wrote_header, expected_columns, table_kind, transform,
+):
+    chunk = _align_score_columns(chunk, table_kind=table_kind)
+    if transform is not None:
+        chunk = transform(chunk)
+
+    if expected_columns is None:
+        expected_columns = list(chunk.columns)
+    else:
+        missing = [col for col in expected_columns if col not in chunk.columns]
+        extra = [col for col in chunk.columns if col not in expected_columns]
+        for col in missing:
+            chunk[col] = np.nan
+        if extra:
+            raise ValueError(
+                f"Schema mismatch while combining {source_path}. "
+                f"Unexpected columns: {extra}. Expected columns: {expected_columns}"
+            )
+        chunk = chunk.reindex(columns=expected_columns)
+
+    chunk.to_csv(handle, header=not wrote_header, index=False)
+    handle.flush()
+    raw_output = getattr(handle, "cache_file", None)
+    if raw_output is not None:
+        current_size = raw_output.tell()
+        if current_size - handle.cache_flushed_size >= 64 * 1024 * 1024:
+            os.fdatasync(raw_output.fileno())
+            _discard_file_cache(raw_output)
+            handle.cache_flushed_size = current_size
+
+    return True, expected_columns
+
+
+@contextmanager
+def _open_csv_gz(path: Path):
+    """Open a gzip text handle; *path* is only replaced once writing succeeded."""
+    tmp_path = path.with_name(path.name + ".tmp")
+    try:
+        with tmp_path.open("wb") as raw_output:
+            with gzip.GzipFile(fileobj=raw_output, mode="wb", compresslevel=6) as compressed:
+                with io.TextIOWrapper(compressed, newline="", encoding="utf-8") as handle:
+                    handle.cache_file = raw_output
+                    handle.cache_flushed_size = 0
+                    yield handle
+            raw_output.flush()
+            os.fdatasync(raw_output.fileno())
+            _discard_file_cache(raw_output)
+        os.replace(tmp_path, path)
+    finally:
+        tmp_path.unlink(missing_ok=True)
 
 
 def _flush_rows_to_csv(rows: list[dict], output_path: Path, wrote_header: bool) -> bool:
@@ -269,12 +324,19 @@ def _flush_rows_to_csv(rows: list[dict], output_path: Path, wrote_header: bool) 
     return True
 
 
-def compute_incumbent_indices_from_selection_scores(selection_scores: List[float]) -> List[int]:
+def compute_incumbent_indices_from_selection_scores(
+    selection_scores: List[float],
+    fold_counts: List[int] | None = None,
+) -> List[int]:
+    # Only fully-evaluated configs may become incumbent.
+    # Use first iteration's fold count as reference for "fully evaluated".
+    expected_folds = fold_counts[0] if fold_counts else None
     incumbent_iteration = 0
     incumbent_indices = []
 
     for i in range(len(selection_scores)):
-        if selection_scores[i] < selection_scores[incumbent_iteration]:
+        is_fully_evaluated = (expected_folds is None or fold_counts[i] >= expected_folds)
+        if is_fully_evaluated and selection_scores[i] < selection_scores[incumbent_iteration]:
             incumbent_iteration = i
         incumbent_indices.append(incumbent_iteration)
 
@@ -726,7 +788,8 @@ def calculate_trajectories(
         ensembled_test_scores: List[float],
         selection_scores: List[float] = None,
         incumbent_indices: List[int] = None,
-        scores_to_attach: dict = None
+        scores_to_attach: dict = None,
+        fold_counts: List[int] | None = None,
 ) -> dict:
     # Incumbent selection state
     incumbent_iteration = 0
@@ -759,7 +822,9 @@ def calculate_trajectories(
 
     if incumbent_indices is None:
         scores_to_select_incumbent_on = selection_scores if selection_scores is not None else val_scores
-        incumbent_indices = compute_incumbent_indices_from_selection_scores(scores_to_select_incumbent_on)
+        incumbent_indices = compute_incumbent_indices_from_selection_scores(
+            scores_to_select_incumbent_on, fold_counts=fold_counts,
+        )
 
     for i in range(len(incumbent_indices)):
         previous_incumbent_iteration = incumbent_iteration
@@ -877,6 +942,7 @@ def preprocess_one_experiment(
         ensembled_test_scores = grouped['cv_ensembled_test_score'].first().values.tolist()
         surrogate_scores = grouped['surrogate_mean'].first().values.tolist()
         val_standard_errors = grouped['val'].apply(lambda x: x.std(ddof=0) / np.sqrt(len(x))).values.tolist()
+        fold_counts = grouped['fold'].nunique().values.tolist()
 
         selection_set_size = run_df['selection_set_size'].iloc[0]
         if pd.notna(selection_set_size) and selection_set_size > 0 and 'avg_selection_score' in run_df.columns:
@@ -889,6 +955,7 @@ def preprocess_one_experiment(
             retrained_test_scores=retrained_test_scores,
             ensembled_test_scores=ensembled_test_scores,
             selection_scores=selection_scores,
+            fold_counts=fold_counts,
         )
 
         surrogate_selection_scores = compute_surrogate_selection_scores(surrogate_scores)
@@ -1020,19 +1087,16 @@ def preprocess_multiple_experiments(
         output_path: str = "src/visualizations/data",
     verbose: bool = True,
     recalculate: bool = False,
-    return_combined_dataframes: bool = True,
-) -> Tuple[pd.DataFrame | None, pd.DataFrame | None]:
+) -> None:
+    """Combine per-experiment outputs into RESULTS_FILE and TRAJECTORIES_FILE in *output_path*.
+
+    Per-experiment CSVs stay in their experiment directories; these two
+    gzip-compressed files are the only combined outputs.
+    """
     output_dir = Path(output_path)
     output_dir.mkdir(parents=True, exist_ok=True)
-
-    combined_results_path = output_dir / "preprocessed_results.csv"
-    combined_trajectories_path = output_dir / "trajectories.csv"
-    combined_one_se_trajectories_path = output_dir / "trajectories_one_se_selection.csv"
-    combined_makarova_trajectories_path = output_dir / "trajectories_makarova.csv"
-    combined_mlplan_trajectories_path = output_dir / "trajectories_mlplan.csv"
-    combined_post_hoc_ensemble_trajectories_path = output_dir / "trajectories_post_hoc_ensemble.csv"
-    combined_post_hoc_surrogate_trajectories_path = output_dir / "trajectories_post_hoc_surrogate.csv"
-    combined_post_hoc_ensemble_results_path = output_dir / "preprocessed_results_post_hoc_ensemble.csv"
+    results_path = output_dir / RESULTS_FILE
+    exp_paths = [Path(exp_dir) for exp_dir in experiment_dirs]
 
     required_exp_outputs = {
         "results": "preprocessed_results.csv",
@@ -1040,24 +1104,6 @@ def preprocess_multiple_experiments(
         "one_se": "trajectories_one_se_selection.csv",
         "makarova": "trajectories_makarova.csv",
     }
-
-    wrote_results_header = False
-    wrote_trajectories_header = False
-    wrote_one_se_trajectories_header = False
-    wrote_makarova_trajectories_header = False
-    wrote_mlplan_trajectories_header = False
-    wrote_post_hoc_ensemble_trajectories_header = False
-    wrote_post_hoc_surrogate_trajectories_header = False
-    wrote_post_hoc_ensemble_results_header = False
-
-    results_columns: List[str] | None = None
-    trajectories_columns: List[str] | None = None
-    one_se_columns: List[str] | None = None
-    makarova_columns: List[str] | None = None
-    mlplan_columns: List[str] | None = None
-    post_hoc_ensemble_columns: List[str] | None = None
-    post_hoc_surrogate_columns: List[str] | None = None
-    post_hoc_ensemble_results_columns: List[str] | None = None
 
     for exp_dir in experiment_dirs:
         if verbose:
@@ -1090,35 +1136,6 @@ def preprocess_multiple_experiments(
             if verbose:
                 print("Using existing preprocessed files and skipping recalculation")
 
-        wrote_results_header, results_columns = append_csv_file(
-            exp_output_paths["results"],
-            combined_results_path,
-            wrote_results_header,
-            expected_columns=results_columns,
-            table_kind="results",
-        )
-        wrote_trajectories_header, trajectories_columns = append_csv_file(
-            exp_output_paths["trajectories"],
-            combined_trajectories_path,
-            wrote_trajectories_header,
-            expected_columns=trajectories_columns,
-            table_kind="trajectories",
-        )
-        wrote_one_se_trajectories_header, one_se_columns = append_csv_file(
-            exp_output_paths["one_se"],
-            combined_one_se_trajectories_path,
-            wrote_one_se_trajectories_header,
-            expected_columns=one_se_columns,
-            table_kind="one_se",
-        )
-        wrote_makarova_trajectories_header, makarova_columns = append_csv_file(
-            exp_output_paths["makarova"],
-            combined_makarova_trajectories_path,
-            wrote_makarova_trajectories_header,
-            expected_columns=makarova_columns,
-            table_kind="makarova",
-        )
-
         mlplan_path = Path(exp_dir) / "trajectories_mlplan.csv"
         if recalculate or not mlplan_path.exists():
             # Import lazily to avoid circular imports at module load time.
@@ -1130,89 +1147,83 @@ def preprocess_multiple_experiments(
                 verbose=verbose,
             )
 
-        if mlplan_path.exists():
-            wrote_mlplan_trajectories_header, mlplan_columns = append_csv_file(
-                mlplan_path,
-                combined_mlplan_trajectories_path,
-                wrote_mlplan_trajectories_header,
-                expected_columns=mlplan_columns,
-                table_kind="mlplan",
+    if verbose:
+        print(f"\nWriting {results_path}")
+    wrote_header, columns = False, None
+    with _open_csv_gz(results_path) as handle:
+        write_started = time.monotonic()
+        for experiment_index, exp_path in enumerate(exp_paths, start=1):
+            experiment_started = time.monotonic()
+            wrote_header, columns = append_csv_file(
+                exp_path / "preprocessed_results.csv", handle, wrote_header, columns, table_kind="results",
             )
+            if verbose:
+                now = time.monotonic()
+                print(
+                    f"[results] Completed {experiment_index}/{len(exp_paths)} "
+                    f"({100 * experiment_index / len(exp_paths):.1f}%); "
+                    f"experiment={now - experiment_started:.1f}s; "
+                    f"elapsed={now - write_started:.1f}s",
+                    flush=True,
+                )
+        if not wrote_header:
+            raise ValueError("No experiments were processed")
 
-        # Aggregate already-computed post-hoc trajectories and raw results when present.
-        # Never recompute or overwrite per-experiment post-hoc files here.
-        post_hoc_ensemble_path = Path(exp_dir) / "trajectories_post_hoc_ensemble.csv"
-        if post_hoc_ensemble_path.exists():
-            wrote_post_hoc_ensemble_trajectories_header, post_hoc_ensemble_columns = append_csv_file(
-                post_hoc_ensemble_path,
-                combined_post_hoc_ensemble_trajectories_path,
-                wrote_post_hoc_ensemble_trajectories_header,
-                expected_columns=post_hoc_ensemble_columns,
-                table_kind="post_hoc_ensemble",
-            )
-
-        # Aggregate raw post-hoc ensemble scores into a separate combined anchor file.
-        # These raw scores are used to extend normalization ranges so that derived
-        # post-hoc test values always fall within [0, 1] after normalization.
-        post_hoc_ensemble_results_path = Path(exp_dir) / "results_post_hoc_ensemble.csv"
-        if post_hoc_ensemble_results_path.exists():
-            wrote_post_hoc_ensemble_results_header, post_hoc_ensemble_results_columns = append_csv_file(
-                post_hoc_ensemble_results_path,
-                combined_post_hoc_ensemble_results_path,
-                wrote_post_hoc_ensemble_results_header,
-                expected_columns=post_hoc_ensemble_results_columns,
-                table_kind="results",
-            )
-
-        post_hoc_surrogate_path = Path(exp_dir) / "trajectories_post_hoc_surrogate.csv"
-        if post_hoc_surrogate_path.exists():
-            wrote_post_hoc_surrogate_trajectories_header, post_hoc_surrogate_columns = append_csv_file(
-                post_hoc_surrogate_path,
-                combined_post_hoc_surrogate_trajectories_path,
-                wrote_post_hoc_surrogate_trajectories_header,
-                expected_columns=post_hoc_surrogate_columns,
-                table_kind="post_hoc_surrogate",
-            )
-
-    if (
-        not wrote_results_header
-        or not wrote_trajectories_header
-        or not wrote_one_se_trajectories_header
-        or not wrote_makarova_trajectories_header
-    ):
-        raise ValueError("No experiments were processed")
-
-    normalize_combined_trajectories(data_dir=output_dir, verbose=verbose)
-    _log_combined_trajectory_dataset_run_counts(output_dir=output_dir, verbose=verbose)
-
-    if not return_combined_dataframes:
-        return None, None
-
-    combined_results_df = pd.read_csv(combined_results_path, low_memory=False)
-    combined_trajectories_df = pd.read_csv(combined_trajectories_path, low_memory=False)
-
-    if verbose and not wrote_post_hoc_ensemble_trajectories_header:
-        print("No per-experiment trajectories_post_hoc_ensemble.csv files found to aggregate")
-    if verbose and not wrote_post_hoc_surrogate_trajectories_header:
-        print("No per-experiment trajectories_post_hoc_surrogate.csv files found to aggregate")
-    if verbose and not wrote_mlplan_trajectories_header:
-        print("No per-experiment trajectories_mlplan.csv files found to aggregate")
-
-    return combined_results_df, combined_trajectories_df
-
-
-if __name__ == "__main__":
-    import os
-
-    
-    experiment_dirs = [
-    ]
-
-    results_df, trajectories_df = preprocess_multiple_experiments(
-        experiment_dirs=experiment_dirs,
-        output_path="src/visualizations/data",
+    # Raw post-hoc ensemble scores extend the ranges so derived post-hoc values stay within [0, 1].
+    ranges_df = build_anchor_ranges(
+        results_path,
+        supplementary_paths=[
+            exp_path / "results_post_hoc_ensemble.csv"
+            for exp_path in exp_paths
+            if (exp_path / "results_post_hoc_ensemble.csv").exists()
+        ],
+        verbose=verbose,
     )
 
-    print(f"Results shape: {results_df.shape}")
-    print(f"Trajectories shape: {trajectories_df.shape}")
-    print("Saved combined outputs to src/visualizations/data/preprocessed_results.csv, src/visualizations/data/trajectories.csv, src/visualizations/data/trajectories_surrogate_selection.csv, and src/visualizations/data/trajectories_one_se_selection.csv")
+    trajectories_path = output_dir / TRAJECTORIES_FILE
+    if verbose:
+        print(f"Writing {trajectories_path}")
+    wrote_header, columns = False, None
+    trajectory_started = time.monotonic()
+    total_trajectory_jobs = len(TRAJECTORY_FILES_BY_METHOD) * len(exp_paths)
+    completed_trajectory_jobs = 0
+    with _open_csv_gz(trajectories_path) as handle:
+        for method, file_name in TRAJECTORY_FILES_BY_METHOD.items():
+            def normalize(chunk: pd.DataFrame, method: str = method) -> pd.DataFrame:
+                chunk = apply_normalization(chunk, ranges_df)
+                chunk.insert(0, "method", method)
+                return chunk
+
+            for exp_path in exp_paths:
+                rows_written = 0
+
+                def report_chunk_progress(row_count: int) -> None:
+                    nonlocal rows_written
+                    previous_rows = rows_written
+                    rows_written += row_count
+                    if verbose and rows_written // 100_000 > previous_rows // 100_000:
+                        print(
+                            f"[trajectories] method={method}, experiment={exp_path.name}; "
+                            f"{rows_written:,} rows written; "
+                            f"elapsed={time.monotonic() - trajectory_started:.1f}s",
+                            flush=True,
+                        )
+
+                wrote_header, columns = append_csv_file(
+                    exp_path / file_name, handle, wrote_header, columns, table_kind=method, transform=normalize,
+                    progress=report_chunk_progress,
+                )
+                completed_trajectory_jobs += 1
+                if verbose:
+                    now = time.monotonic()
+                    print(
+                        f"[trajectories] Completed {completed_trajectory_jobs}/"
+                        f"{total_trajectory_jobs} "
+                        f"({100 * completed_trajectory_jobs / total_trajectory_jobs:.1f}%); "
+                        f"method={method}, experiment={exp_path.name}, "
+                        f"rows={rows_written:,}; "
+                        f"elapsed={now - trajectory_started:.1f}s",
+                        flush=True,
+                    )
+
+    _log_combined_trajectory_dataset_run_counts(output_dir=output_dir, verbose=verbose)

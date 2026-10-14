@@ -193,6 +193,8 @@ def plot_relative_overtuning_delta_scatter(
         x_vals = x_vals[finite_mask]
         y_vals = y_vals[finite_mask]
         edge_color = _darken(spec.color)
+        if isinstance(spec.color, tuple) and len(spec.color) == 4:
+            edge_color = (*mcolors.to_rgb(edge_color), spec.color[3])
 
         if show_raw_points:
             ax.scatter(
@@ -227,7 +229,6 @@ def plot_relative_overtuning_delta_scatter(
             capsize=5,
             elinewidth=2.0,
             linewidth=1.8,
-            alpha=1.0,
             zorder=4,
             label="_nolegend_",
         )
@@ -319,7 +320,7 @@ def plot_relative_overtuning_delta_scatter(
     ax.grid(True, linestyle="--", alpha=0.3)
 
     if show_legend and legend_handles:
-        ax.legend(handles=legend_handles, loc="lower right", fontsize=12, framealpha=0.88, ncol=1)
+        ax.legend(handles=legend_handles, loc="lower right", fontsize=9.5, framealpha=0.88, ncol=1)
 
     if ax is None:
         fig.tight_layout()
